@@ -1,0 +1,9 @@
+# BEGIN my-aidlc:pi
+# my-aidlc workspace runtime
+aidlc/.my-aidlc-sessions/
+aidlc/config.local.json
+aidlc/spaces/*/.active-space
+aidlc/spaces/*/intents/*/.active-intent
+# PI Agent local settings
+.pi/settings.local.json
+# END my-aidlc:pi
