@@ -1,0 +1,182 @@
+#!/usr/bin/env bash
+# One entrypoint for the local stack. Only Docker is required for `./dev up`.
+#
+#   ./dev up          build + start everything, seed the first admin and demo customers, print URLs
+#   ./dev status      container state + health endpoints
+#   ./dev logs [svc]  follow logs (all services, or one)
+#   ./dev seed EMAIL  create another super_admin (prints a one-time recovery link)
+#   ./dev seed-customers   demo customers with encrypted personal info (Node >= 22)
+#   ./dev migrate-names    move customer names from Kratos traits into encrypted personal info
+#   ./dev smoke       end-to-end smoke test (needs Node >= 22)
+#   ./dev mobile [android|ios]   run the Flutter app against the stack
+#   ./dev web         admin web with Vite hot reload instead of the container
+#   ./dev down        stop (keeps data)
+#   ./dev reset       stop and delete all data (asks first)
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENV_FILE="$ROOT/deploy/compose/.env"
+ADMIN_EMAIL="${ADMIN_EMAIL:-admin@example.local}"
+
+compose() {
+  docker compose --env-file "$ENV_FILE" -f "$ROOT/deploy/compose/docker-compose.yml" --profile app "$@"
+}
+
+say() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
+die() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
+
+need() { command -v "$1" >/dev/null 2>&1 || die "$1 is required ($2)"; }
+
+ensure_env() {
+  if [[ ! -f "$ENV_FILE" ]]; then
+    cp "$ROOT/deploy/compose/.env.example" "$ENV_FILE"
+    say "created deploy/compose/.env from the example (local-only values)"
+  fi
+  # Kratos runs in a container: a localhost webhook URL (host-run service)
+  # makes every customer login fail.
+  if grep -q '^IDENTITY_WEBHOOK_BASE_URL=http://localhost' "$ENV_FILE"; then
+    say "warning: IDENTITY_WEBHOOK_BASE_URL in deploy/compose/.env points to localhost;"
+    say "         with the full compose stack it must be http://identity-service:8081"
+  fi
+}
+
+check_docker() {
+  need docker "https://docs.docker.com/get-docker/"
+  docker compose version >/dev/null 2>&1 || die "Docker Compose v2 is required (docker compose ...)"
+  docker info >/dev/null 2>&1 || die "Docker is not running"
+}
+
+# Creates the admin on the first run; later runs report that it already exists.
+seed() {
+  local email="$1" out
+  if out="$(compose exec -T identity-service /identity-service admin bootstrap --email "$email" 2>&1)"; then
+    printf '%s\n' "$out"
+    say "open the recovery link above to set the password, then enrol TOTP (MFA is mandatory)"
+  elif grep -q "already exists" <<<"$out"; then
+    say "admin $email already exists (forgot the password? use \"Forgot password\" on the login page; mail goes to Mailpit)"
+  else
+    printf '%s\n' "$out" >&2
+    die "admin bootstrap failed"
+  fi
+}
+
+# Moves customer names out of the Kratos traits into the encrypted personal
+# info (idempotent; prints counts, never names). Returns the CLI's exit
+# status; names that were not moved stay in Kratos and the next run completes
+# the move. Flags: --dry-run, --strip-invalid.
+migrate_names() {
+  compose exec -T identity-service /identity-service pii migrate-kratos-names "$@"
+}
+
+# Demo customers with encrypted personal info, through the real flows.
+seed_customers() {
+  if ! command -v node >/dev/null 2>&1; then
+    say "skipping demo customers (needs Node >= 22): run ./dev seed-customers later"
+    return 0
+  fi
+  local pw
+  pw="$(sed -n 's/^SEED_CUSTOMER_PASSWORD=//p' "$ENV_FILE" | tail -1)"
+  SEED_CUSTOMER_PASSWORD="$pw" node "$ROOT/scripts/seed-customers.mjs" \
+    || say "warning: some demo customers were not seeded; re-run ./dev seed-customers"
+  [[ -n "$pw" ]] && say "demo customers: customer01..05@example.local, password from SEED_CUSTOMER_PASSWORD in deploy/compose/.env"
+  return 0
+}
+
+probe() {
+  local name="$1" url="$2"
+  if curl -fsS -o /dev/null --max-time 3 "$url" 2>/dev/null; then
+    printf '  %-18s ok\n' "$name"
+  else
+    printf '  %-18s DOWN  (%s)\n' "$name" "$url"
+  fi
+}
+
+urls() {
+  cat <<EOF
+
+Local stack is up:
+  Admin web          http://localhost:5173        (sign in as $ADMIN_EMAIL)
+  identity-service   http://localhost:8080        (ops: http://127.0.0.1:9090/readyz)
+  Kratos public      http://localhost:4433
+  Hydra public       http://localhost:4444        (M2M tokens: client_credentials)
+  Mailpit            http://localhost:8025        (all emails: verification, recovery)
+  Postgres           127.0.0.1:5432
+  OpenBao            http://127.0.0.1:8200
+
+Next: ./dev mobile   (Flutter app)   |   ./dev smoke   |   ./dev logs   |   ./dev down
+EOF
+}
+
+cmd_up() {
+  check_docker
+  ensure_env
+  say "building and starting the stack (first run pulls images and builds; a few minutes)"
+  compose up -d --build --wait
+  say "creating the first super_admin"
+  seed "$ADMIN_EMAIL"
+  say "moving customer names from Kratos into encrypted personal info"
+  migrate_names || say "warning: some customer names were not migrated; re-run ./dev migrate-names"
+  say "seeding demo customers (skips the ones that exist)"
+  seed_customers
+  urls
+}
+
+cmd_status() {
+  check_docker
+  need curl "used for the health probes"
+  compose ps --format 'table {{.Service}}\t{{.State}}\t{{.Status}}'
+  echo
+  probe "kratos" http://localhost:4433/health/ready
+  probe "keto" http://127.0.0.1:4466/health/ready
+  probe "hydra" http://localhost:4444/health/ready
+  probe "identity-service" http://127.0.0.1:9090/readyz
+  probe "admin-web" http://localhost:5173/healthz
+  probe "mailpit" http://localhost:8025/
+}
+
+cmd_mobile() {
+  need flutter "https://docs.flutter.dev/get-started/install"
+  local target="${1:-android}" envfile
+  case "$target" in
+    android) envfile="env/local.json" ;;
+    ios) envfile="env/local.ios.json" ;;
+    *) die "usage: ./dev mobile [android|ios]" ;;
+  esac
+  cd "$ROOT/apps/mobile"
+  [[ -f "$envfile" ]] || cp "$envfile.example" "$envfile"
+  flutter pub get
+  flutter run --dart-define-from-file="$envfile"
+}
+
+cmd_web() {
+  need pnpm "corepack enable, or https://pnpm.io/installation"
+  say "stopping the admin-web container so Vite can use :5173"
+  compose stop admin-web >/dev/null 2>&1 || true
+  cd "$ROOT/apps/admin-web"
+  [[ -f .env ]] || cp .env.example .env
+  pnpm install --frozen-lockfile
+  pnpm dev
+}
+
+cmd_reset() {
+  check_docker
+  read -r -p "Delete ALL local data (databases, OpenBao keys, encrypted PII)? [y/N] " ans
+  [[ "$ans" == "y" || "$ans" == "Y" ]] || { echo "cancelled"; exit 0; }
+  compose down -v
+}
+
+case "${1:-up}" in
+  up) cmd_up ;;
+  down) check_docker; compose down ;;
+  reset) cmd_reset ;;
+  status) cmd_status ;;
+  logs) check_docker; shift; compose logs -f "$@" ;;
+  seed) check_docker; seed "${2:?usage: ./dev seed EMAIL}" ;;
+  smoke) need node "Node >= 22"; node "$ROOT/scripts/smoke.mjs" ;;
+  seed-customers) need node "Node >= 22"; ensure_env; seed_customers ;;
+  migrate-names) check_docker; shift; migrate_names "$@" ;;
+  mobile) shift; cmd_mobile "${1:-android}" ;;
+  web) cmd_web ;;
+  -h | --help | help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) die "unknown command: $1 (try ./dev help)" ;;
+esac

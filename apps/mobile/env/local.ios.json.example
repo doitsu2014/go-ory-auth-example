@@ -1,0 +1,4 @@
+{
+  "KRATOS_PUBLIC_URL": "http://localhost:4433",
+  "API_URL": "http://localhost:8080"
+}

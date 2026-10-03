@@ -1,0 +1,80 @@
+# Source Changes
+
+Uncommitted working tree after N0–N4 (git status --short):
+
+```
+ M README.md
+ M aidlc/audit.log
+ M aidlc/state.json
+ M api/openapi/identity-service.v1.yaml
+ M apps/admin-web/src/api/client.ts
+ M apps/admin-web/src/api/schema.d.ts
+ M apps/admin-web/src/features/customers/CustomerDetailPage.test.tsx
+ M apps/admin-web/src/features/customers/CustomerDetailPage.tsx
+ M apps/admin-web/src/features/customers/PersonalInfoCard.test.tsx
+ M apps/admin-web/src/features/customers/PersonalInfoCard.tsx
+ M apps/admin-web/src/features/customers/PhoneLookup.test.tsx
+ M apps/admin-web/src/features/customers/PhoneLookup.tsx
+ M apps/admin-web/src/i18n/en.ts
+ M apps/admin-web/src/i18n/vi.ts
+ M apps/admin-web/src/shared/format.ts
+ M apps/admin-web/src/test/fixtures.ts
+ M apps/mobile/lib/core/kratos/kratos_client.dart
+ M apps/mobile/lib/core/kratos/ory_kratos_client.dart
+ M apps/mobile/lib/features/auth/data/auth_repository.dart
+ M apps/mobile/lib/features/auth/presentation/sign_up_screen.dart
+ M apps/mobile/lib/features/profile/domain/me.dart
+ M apps/mobile/lib/features/profile/domain/personal_info.dart
+ M apps/mobile/lib/features/profile/domain/personal_info_validation.dart
+ M apps/mobile/lib/features/profile/presentation/personal_info_screen.dart
+ M apps/mobile/lib/features/profile/presentation/profile_screen.dart
+ M apps/mobile/lib/l10n/app_en.arb
+ M apps/mobile/lib/l10n/app_vi.arb
+ M apps/mobile/lib/l10n/gen/app_localizations.dart
+ M apps/mobile/lib/l10n/gen/app_localizations_en.dart
+ M apps/mobile/lib/l10n/gen/app_localizations_vi.dart
+ M apps/mobile/test/features/auth/auth_repository_test.dart
+ M apps/mobile/test/features/auth/sign_up_screen_test.dart
+ M apps/mobile/test/features/profile/personal_info_screen_test.dart
+ M apps/mobile/test/features/profile/personal_info_test.dart
+ M apps/mobile/test/features/profile/profile_screens_test.dart
+ M apps/mobile/test/integration/kratos_native_flow_test.dart
+ M deploy/ory/kratos/identity-schemas/customer.v1.json
+ M dev
+ M docs/adr/0011-envelope-encryption-for-pii.md
+ M docs/api/identity-service-api.md
+ M docs/architecture/04-data.md
+ M docs/architecture/06-security.md
+ M docs/architecture/08-pii-protection.md
+ M scripts/seed-customers.mjs
+ M scripts/smoke.mjs
+ M services/identity-service/cmd/identity-service/main.go
+ M services/identity-service/db/queries/pii.sql
+ M services/identity-service/internal/adapter/httpapi/bodycheck.go
+ M services/identity-service/internal/adapter/httpapi/gen/api.gen.go
+ M services/identity-service/internal/adapter/httpapi/personalinfo.go
+ M services/identity-service/internal/adapter/httpapi/server.go
+ M services/identity-service/internal/adapter/kratos/admin.go
+ M services/identity-service/internal/adapter/kratos/admin_integration_test.go
+ M services/identity-service/internal/adapter/kratos/model.go
+ M services/identity-service/internal/adapter/postgres/pii.go
+ M services/identity-service/internal/adapter/postgres/pii_integration_test.go
+ M services/identity-service/internal/adapter/postgres/sqlcgen/models.go
+ M services/identity-service/internal/adapter/postgres/sqlcgen/pii.sql.go
+ M services/identity-service/internal/app/personalinfo.go
+ M services/identity-service/internal/app/ports.go
+ M services/identity-service/internal/domain/audit/audit.go
+ M services/identity-service/internal/domain/audit/machine_test.go
+ M services/identity-service/internal/domain/identity/identity.go
+ M services/identity-service/internal/domain/pii/pii.go
+ M services/identity-service/internal/testutil/fakes.go
+ M services/identity-service/internal/testutil/itest/itest.go
+?? aidlc/spaces/default/intents/261003-move-customer-full/
+?? apps/mobile/test/core/ory_kratos_client_test.dart
+?? services/identity-service/db/migrations/0005_customer_pii_name.sql
+?? services/identity-service/internal/adapter/httpapi/name_test.go
+?? services/identity-service/internal/app/name_test.go
+?? services/identity-service/internal/app/namemigration.go
+?? services/identity-service/internal/domain/pii/name_test.go
+?? services/identity-service/internal/e2e/name_integration_test.go
+```

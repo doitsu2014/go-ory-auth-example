@@ -41,3 +41,6 @@ aidlc/spaces/*/intents/*/.active-intent
 # Claude Code per-machine settings
 .claude/settings.local.json
 # END my-aidlc:claude
+
+# Local runtime secrets (OpenBao app token for host-run tests)
+deploy/compose/.local/

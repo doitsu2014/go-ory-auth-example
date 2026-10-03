@@ -1,0 +1,37 @@
+{
+  "$id": "https://schemas.go-ory-auth-example.local/admin.v1.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Admin",
+  "type": "object",
+  "properties": {
+    "traits": {
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 320,
+          "title": "Email",
+          "ory.sh/kratos": {
+            "credentials": {
+              "password": { "identifier": true },
+              "totp": { "account_name": true }
+            },
+            "verification": { "via": "email" },
+            "recovery": { "via": "email" }
+          }
+        },
+        "name": {
+          "type": "object",
+          "properties": {
+            "first": { "type": "string", "maxLength": 100, "title": "First name" },
+            "last": { "type": "string", "maxLength": 100, "title": "Last name" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": ["email"],
+      "additionalProperties": false
+    }
+  }
+}

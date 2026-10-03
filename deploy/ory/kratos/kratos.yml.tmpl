@@ -1,0 +1,161 @@
+# Kratos configuration template (local development values).
+#
+# No secret values live in this file. `__KRATOS_WEBHOOK_API_KEY__` is replaced
+# by the kratos-config init container (see deploy/compose/docker-compose.yml);
+# Kratos does not expand ${VAR}. Other secrets come from env overrides that map
+# straight from the config path: SECRETS_COOKIE, SECRETS_CIPHER, DSN,
+# COURIER_SMTP_CONNECTION_URI.
+version: v26.2.0
+
+serve:
+  public:
+    base_url: http://localhost:4433/
+    cors:
+      enabled: true
+      allowed_origins:
+        - http://localhost:5173
+      allowed_methods: [POST, GET, PUT, PATCH, DELETE]
+      allowed_headers: [Authorization, Cookie, Content-Type, X-Session-Token, X-CSRF-Token]
+      exposed_headers: [Content-Type, Set-Cookie]
+      allow_credentials: true
+  admin:
+    base_url: http://kratos:4434/
+
+selfservice:
+  default_browser_return_url: http://localhost:5173/
+  allowed_return_urls:
+    - http://localhost:5173
+
+  methods:
+    password:
+      enabled: true
+      config:
+        min_password_length: 12
+        identifier_similarity_check_enabled: true
+        haveibeenpwned_enabled: true
+    totp:
+      enabled: true
+      config:
+        issuer: go-ory-auth-example
+    lookup_secret:
+      enabled: true
+    code:
+      enabled: true
+      config:
+        passwordless_enabled: false
+        mfa_enabled: false
+    link:
+      enabled: false
+    profile:
+      enabled: true
+
+  flows:
+    error:
+      ui_url: http://localhost:5173/error
+
+    settings:
+      ui_url: http://localhost:5173/settings
+      privileged_session_max_age: 15m
+      required_aal: highest_available
+
+    recovery:
+      enabled: true
+      ui_url: http://localhost:5173/recovery
+      use: code
+      after:
+        hooks:
+          - hook: revoke_active_sessions
+
+    verification:
+      enabled: true
+      ui_url: http://localhost:5173/verification
+      use: code
+      after:
+        default_browser_return_url: http://localhost:5173/
+
+    logout:
+      after:
+        default_browser_return_url: http://localhost:5173/login
+
+    login:
+      ui_url: http://localhost:5173/login
+      lifespan: 10m
+      after:
+        hooks:
+          - hook: web_hook
+            config:
+              url: __IDENTITY_WEBHOOK_BASE_URL__/internal/hooks/kratos/after-login
+              method: POST
+              body: file:///etc/config/kratos/webhooks/after-login.jsonnet
+              can_interrupt: true
+              auth:
+                type: api_key
+                config:
+                  name: Authorization
+                  value: __KRATOS_WEBHOOK_API_KEY__
+                  in: header
+
+    registration:
+      enabled: true
+      ui_url: http://localhost:5173/registration
+      lifespan: 10m
+      after:
+        password:
+          hooks:
+            - hook: web_hook
+              config:
+                url: __IDENTITY_WEBHOOK_BASE_URL__/internal/hooks/kratos/after-registration
+                method: POST
+                body: file:///etc/config/kratos/webhooks/after-registration.jsonnet
+                response:
+                  ignore: true
+                auth:
+                  type: api_key
+                  config:
+                    name: Authorization
+                    value: __KRATOS_WEBHOOK_API_KEY__
+                    in: header
+            - hook: session
+
+session:
+  lifespan: 720h
+  earliest_possible_extend: 24h
+  whoami:
+    required_aal: highest_available
+  cookie:
+    same_site: Lax
+    persistent: false
+
+log:
+  level: info
+  format: json
+  leak_sensitive_values: false
+
+ciphers:
+  algorithm: xchacha20-poly1305
+
+hashers:
+  algorithm: bcrypt
+  bcrypt:
+    cost: 12
+
+identity:
+  default_schema_id: customer
+  schemas:
+    - id: customer
+      url: file:///etc/config/kratos/identity-schemas/customer.v1.json
+      selfservice_selectable: true
+    - id: admin
+      url: file:///etc/config/kratos/identity-schemas/admin.v1.json
+      selfservice_selectable: false
+
+feature_flags:
+  # Native (API) recovery returns continue_with [set_ory_session_token,
+  # show_settings_ui] instead of a browser redirect, so the mobile app can
+  # finish password reset (FR-04).
+  use_continue_with_transitions: true
+
+courier:
+  smtp:
+    from_address: no-reply@go-ory-auth-example.local
+    from_name: go-ory-auth-example

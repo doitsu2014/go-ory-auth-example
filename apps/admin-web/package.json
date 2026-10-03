@@ -1,0 +1,67 @@
+{
+  "name": "@go-ory-auth-example/admin-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit -p tsconfig.app.json && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json",
+    "lint": "eslint . --max-warnings=0 && prettier --check .",
+    "format": "prettier --write .",
+    "test": "vitest",
+    "e2e": "playwright test",
+    "generate:api": "openapi-typescript ../../api/openapi/identity-service.v1.yaml -o src/api/schema.d.ts && prettier --write src/api/schema.d.ts"
+  },
+  "dependencies": {
+    "@ory/client-fetch": "~1.22.66",
+    "@tanstack/react-query": "^5.104.1",
+    "@hookform/resolvers": "^5.2.2",
+    "i18next": "^25.10.10",
+    "openapi-fetch": "^0.14.1",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-hook-form": "^7.89.0",
+    "react-i18next": "^15.7.4",
+    "react-router": "^7.18.4",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@playwright/test": "^1.63.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/jest-dom": "^6.10.0",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.7",
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "eslint": "^9.39.5",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-jsx-a11y": "^6.10.2",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.20",
+    "globals": "^16.0.0",
+    "jsdom": "^26.1.0",
+    "msw": "^2.15.0",
+    "openapi-typescript": "^7.13.0",
+    "prettier": "^3.9.9",
+    "tailwindcss": "^4.3.3",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.71.0",
+    "vite": "^7.3.6",
+    "vitest": "^3.2.7"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}
