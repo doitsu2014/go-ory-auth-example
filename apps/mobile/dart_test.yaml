@@ -1,0 +1,19 @@
+# Real-stack tests (Kratos + Mailpit [+ identity-service]) are tagged
+# `integration` and skipped in the default `flutter test` run.
+#
+# Run them with either:
+#   flutter test -P integration
+#   flutter test --tags integration --run-skipped
+#
+# Note: `exclude_tags` cannot be used for the default exclusion because
+# package:test unions config and CLI excludes, so `--tags integration` could
+# never re-include them; a tag-level `skip` + `run_skipped` is used instead.
+tags:
+  integration:
+    skip: "Real-stack test: run with `flutter test -P integration`"
+    timeout: 2x
+
+presets:
+  integration:
+    include_tags: integration
+    run_skipped: true

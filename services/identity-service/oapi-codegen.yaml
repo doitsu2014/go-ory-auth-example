@@ -1,0 +1,11 @@
+# Server code generated from the contract (ADR-0010). Webhook routes (tag
+# "hooks") are served on :8081 by hand-written handlers that reuse the models.
+package: gen
+output: internal/adapter/httpapi/gen/api.gen.go
+generate:
+  chi-server: true
+  strict-server: true
+  models: true
+output-options:
+  exclude-tags: [hooks]
+  nullable-type: true

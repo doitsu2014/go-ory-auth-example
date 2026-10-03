@@ -1,0 +1,18 @@
+# Production response headers for the static host (Netlify / Cloudflare Pages
+# `_headers` format). CSP MUST be an HTTP header: `frame-ancestors` is ignored
+# in a <meta> tag (docs/architecture/06-security.md §6.5).
+# Replace auth.example.com / api.example.com with the real Kratos public and
+# identity-service origins for each environment.
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://auth.example.com https://api.example.com; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self' https://auth.example.com
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  Cross-Origin-Opener-Policy: same-origin
+
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/index.html
+  Cache-Control: no-cache

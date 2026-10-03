@@ -1,0 +1,191 @@
+// Package platform holds process wiring helpers: config, logging, telemetry.
+package platform
+
+import (
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"net/url"
+	"os"
+	"time"
+
+	"github.com/caarlos0/env/v11"
+)
+
+// Config is the 12-factor environment configuration.
+type Config struct {
+	HTTPAddr    string `env:"HTTP_ADDR" envDefault:":8080"`
+	WebhookAddr string `env:"WEBHOOK_ADDR" envDefault:":8081"`
+	OpsAddr     string `env:"OPS_ADDR" envDefault:":9090"`
+
+	DatabaseURL        string `env:"DATABASE_URL"`
+	MigrateDatabaseURL string `env:"MIGRATE_DATABASE_URL"`
+	MigrateOnStart     bool   `env:"MIGRATE_ON_START" envDefault:"false"`
+
+	KratosPublicURL string        `env:"KRATOS_PUBLIC_URL" envDefault:"http://localhost:4433"`
+	KratosAdminURL  string        `env:"KRATOS_ADMIN_URL" envDefault:"http://127.0.0.1:4434"`
+	KetoReadURL     string        `env:"KETO_READ_URL" envDefault:"http://127.0.0.1:4466"`
+	KetoWriteURL    string        `env:"KETO_WRITE_URL" envDefault:"http://127.0.0.1:4467"`
+	OryTimeout      time.Duration `env:"ORY_TIMEOUT" envDefault:"2s"`
+
+	KratosWebhookAPIKey string `env:"KRATOS_WEBHOOK_API_KEY"`
+
+	CORSAllowedOrigins []string `env:"CORS_ALLOWED_ORIGINS" envSeparator:","`
+
+	SMTPURL     string `env:"SMTP_URL" envDefault:"smtp://127.0.0.1:1025"`
+	SMTPFrom    string `env:"SMTP_FROM" envDefault:"no-reply@go-ory-auth-example.local"`
+	AdminWebURL string `env:"ADMIN_WEB_URL" envDefault:"http://localhost:5173"`
+
+	LogLevel     string `env:"LOG_LEVEL" envDefault:"info"`
+	OTLPEndpoint string `env:"OTEL_EXPORTER_OTLP_ENDPOINT"`
+
+	SessionCacheSize    int           `env:"SESSION_CACHE_SIZE" envDefault:"10000"`
+	AdminSessionMaxAge  time.Duration `env:"ADMIN_SESSION_MAX_AGE" envDefault:"12h"`
+	AdminMFAGrace       time.Duration `env:"ADMIN_MFA_ENROLLMENT_GRACE" envDefault:"24h"`
+	InvitationTTL       time.Duration `env:"ADMIN_INVITATION_TTL" envDefault:"24h"`
+	ShutdownGracePeriod time.Duration `env:"SHUTDOWN_GRACE_PERIOD" envDefault:"15s"`
+	// TrustedProxyHops is the number of trusted reverse proxies in front of
+	// the service; 0 ignores X-Forwarded-For.
+	TrustedProxyHops int           `env:"TRUSTED_PROXY_HOPS" envDefault:"0"`
+	MFASweepInterval time.Duration `env:"ADMIN_MFA_SWEEP_INTERVAL" envDefault:"5m"`
+
+	// AppEnv is production | staging | local | test. It defaults to
+	// production so that development-only switches fail closed.
+	AppEnv string `env:"APP_ENV" envDefault:"production"`
+
+	// Personal information encryption (intent 261003-encrypt-user-pii).
+	PIIKMSProvider        string        `env:"PII_KMS_PROVIDER" envDefault:"openbao"`
+	PIIOpenBaoAddr        string        `env:"PII_OPENBAO_ADDR" envDefault:"http://127.0.0.1:8200"`
+	PIIOpenBaoTokenFile   string        `env:"PII_OPENBAO_TOKEN_FILE"`
+	PIIOpenBaoKEKName     string        `env:"PII_OPENBAO_KEK_NAME" envDefault:"identity-pii-kek"`
+	PIIOpenBaoBidxKeyName string        `env:"PII_OPENBAO_BIDX_KEY_NAME" envDefault:"identity-pii-bidx"`
+	PIIOpenBaoTimeout     time.Duration `env:"PII_OPENBAO_TIMEOUT" envDefault:"2s"`
+	// PIIOpenBaoCAFile optionally replaces the system roots with a PEM CA
+	// bundle for the OpenBao TLS connection.
+	PIIOpenBaoCAFile string `env:"PII_OPENBAO_CA_FILE"`
+	// PIILocalKEK / PIILocalBidxKey are base64 32-byte keys for
+	// PII_KMS_PROVIDER=local (APP_ENV local|test only). Secrets: never log.
+	PIILocalKEK     string        `env:"PII_LOCAL_KEK"`
+	PIILocalBidxKey string        `env:"PII_LOCAL_BIDX_KEY"`
+	PIIDEKCacheTTL  time.Duration `env:"PII_DEK_CACHE_TTL" envDefault:"5m"`
+	PIIDEKCacheSize int           `env:"PII_DEK_CACHE_SIZE" envDefault:"10000"`
+}
+
+// KMS providers.
+const (
+	KMSProviderOpenBao = "openbao"
+	KMSProviderLocal   = "local"
+)
+
+// DevEnv reports whether APP_ENV allows development-only providers.
+func (c Config) DevEnv() bool { return c.AppEnv == "local" || c.AppEnv == "test" }
+
+// ValidatePII checks the key manager settings (serve and the key CLI).
+func (c Config) ValidatePII() error {
+	var errs []error
+	switch c.AppEnv {
+	case "production", "staging", "local", "test":
+	default:
+		errs = append(errs, errors.New("APP_ENV must be production, staging, local or test"))
+	}
+	switch c.PIIKMSProvider {
+	case KMSProviderOpenBao:
+		u, err := url.Parse(c.PIIOpenBaoAddr)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			errs = append(errs, errors.New("PII_OPENBAO_ADDR must be an http(s) URL"))
+		} else if u.Scheme == "http" && !c.DevEnv() {
+			errs = append(errs, errors.New("PII_OPENBAO_ADDR must use https unless APP_ENV is local or test"))
+		}
+		if c.PIIOpenBaoCAFile != "" {
+			if fi, err := os.Stat(c.PIIOpenBaoCAFile); err != nil || fi.IsDir() {
+				errs = append(errs, errors.New("PII_OPENBAO_CA_FILE must be a readable PEM file"))
+			}
+		}
+		if c.PIIOpenBaoTokenFile == "" {
+			errs = append(errs, errors.New("PII_OPENBAO_TOKEN_FILE is required for PII_KMS_PROVIDER=openbao"))
+		}
+		if c.PIIOpenBaoKEKName == "" || c.PIIOpenBaoBidxKeyName == "" || c.PIIOpenBaoKEKName == c.PIIOpenBaoBidxKeyName {
+			errs = append(errs, errors.New("PII_OPENBAO_KEK_NAME and PII_OPENBAO_BIDX_KEY_NAME must be set and distinct"))
+		}
+		if c.PIIOpenBaoTimeout <= 0 {
+			errs = append(errs, errors.New("PII_OPENBAO_TIMEOUT must be > 0"))
+		}
+	case KMSProviderLocal:
+		if !c.DevEnv() {
+			errs = append(errs, errors.New("PII_KMS_PROVIDER=local is only allowed when APP_ENV is local or test"))
+		}
+		if !is32Base64(c.PIILocalKEK) || !is32Base64(c.PIILocalBidxKey) {
+			errs = append(errs, errors.New("PII_LOCAL_KEK and PII_LOCAL_BIDX_KEY must be base64 32-byte keys"))
+		} else if c.PIILocalKEK == c.PIILocalBidxKey {
+			errs = append(errs, errors.New("PII_LOCAL_KEK and PII_LOCAL_BIDX_KEY must differ"))
+		}
+	default:
+		errs = append(errs, errors.New("PII_KMS_PROVIDER must be openbao or local"))
+	}
+	if c.PIIDEKCacheTTL <= 0 || c.PIIDEKCacheTTL > 15*time.Minute {
+		errs = append(errs, errors.New("PII_DEK_CACHE_TTL must be in (0, 15m]"))
+	}
+	if c.PIIDEKCacheSize <= 0 {
+		errs = append(errs, errors.New("PII_DEK_CACHE_SIZE must be > 0"))
+	}
+	return errors.Join(errs...)
+}
+
+func is32Base64(s string) bool {
+	b, err := base64.StdEncoding.DecodeString(s)
+	return err == nil && len(b) == 32
+}
+
+// LoadConfig parses the environment.
+func LoadConfig() (Config, error) {
+	var c Config
+	if err := env.Parse(&c); err != nil {
+		return c, fmt.Errorf("config: %w", err)
+	}
+	return c, nil
+}
+
+// ValidateServe checks settings required by `serve`. Startup fails closed
+// when a secret is missing.
+func (c Config) ValidateServe() error {
+	var errs []error
+	if c.DatabaseURL == "" {
+		errs = append(errs, errors.New("DATABASE_URL is required"))
+	}
+	if len(c.KratosWebhookAPIKey) < 16 {
+		errs = append(errs, errors.New("KRATOS_WEBHOOK_API_KEY is required (>= 16 chars)"))
+	}
+	if c.MigrateOnStart && c.MigrateDatabaseURL == "" {
+		errs = append(errs, errors.New("MIGRATE_DATABASE_URL is required when MIGRATE_ON_START=true"))
+	}
+	if len(c.CORSAllowedOrigins) == 0 {
+		errs = append(errs, errors.New("CORS_ALLOWED_ORIGINS is required (admin web origin)"))
+	}
+	for _, o := range c.CORSAllowedOrigins {
+		if o == "*" || o == "" {
+			errs = append(errs, errors.New("CORS_ALLOWED_ORIGINS must list explicit origins"))
+		}
+	}
+	if c.AdminSessionMaxAge <= 0 || c.AdminSessionMaxAge > 12*time.Hour {
+		errs = append(errs, errors.New("ADMIN_SESSION_MAX_AGE must be in (0, 12h]"))
+	}
+	if c.AdminMFAGrace <= 0 || c.AdminMFAGrace > 24*time.Hour {
+		errs = append(errs, errors.New("ADMIN_MFA_ENROLLMENT_GRACE must be in (0, 24h]"))
+	}
+	if c.ShutdownGracePeriod <= 0 {
+		errs = append(errs, errors.New("SHUTDOWN_GRACE_PERIOD must be > 0"))
+	}
+	if c.TrustedProxyHops < 0 {
+		errs = append(errs, errors.New("TRUSTED_PROXY_HOPS must be >= 0"))
+	}
+	if c.MFASweepInterval <= 0 {
+		errs = append(errs, errors.New("ADMIN_MFA_SWEEP_INTERVAL must be > 0"))
+	}
+	if c.InvitationTTL <= 0 || c.InvitationTTL > 24*time.Hour {
+		errs = append(errs, errors.New("ADMIN_INVITATION_TTL must be in (0, 24h]"))
+	}
+	if err := c.ValidatePII(); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
+}

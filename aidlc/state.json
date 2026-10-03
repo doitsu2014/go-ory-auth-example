@@ -1,0 +1,90 @@
+{
+  "workflowVersion": "1.0.0",
+  "engineVersion": "0.1.0",
+  "activeIntent": {
+    "id": "261003-encrypt-user-pii",
+    "label": "encrypt-user-pii",
+    "description": "Encrypt user PII at rest using industry-standard envelope encryption (AEAD + KMS-managed keys, blind index for lookups, crypto-shredding), on top of the existing Go identity service + Ory stack running in docker compose",
+    "scope": "feature",
+    "space": "default",
+    "createdAt": "2026-10-03T07:46:50.254Z"
+  },
+  "currentStage": "test-plan",
+  "parked": true,
+  "stages": {
+    "intent-capture": {
+      "status": "complete",
+      "attempt": 1,
+      "feedback": [],
+      "updatedAt": "2026-10-03T07:48:22.930Z"
+    },
+    "requirements-analysis": {
+      "status": "complete",
+      "attempt": 1,
+      "feedback": [],
+      "updatedAt": "2026-10-03T07:50:29.139Z"
+    },
+    "feasibility-assessment": {
+      "status": "complete",
+      "attempt": 1,
+      "feedback": [],
+      "updatedAt": "2026-10-03T07:51:26.092Z"
+    },
+    "architecture-design": {
+      "status": "complete",
+      "attempt": 1,
+      "feedback": [],
+      "updatedAt": "2026-10-03T07:52:42.339Z"
+    },
+    "api-contract": {
+      "status": "complete",
+      "attempt": 1,
+      "feedback": [],
+      "updatedAt": "2026-10-03T07:53:52.788Z"
+    },
+    "design-patterns": {
+      "status": "complete",
+      "attempt": 1,
+      "feedback": [],
+      "updatedAt": "2026-10-03T07:54:10.404Z"
+    },
+    "technical-spec": {
+      "status": "complete",
+      "attempt": 1,
+      "feedback": [],
+      "updatedAt": "2026-10-03T07:54:51.081Z"
+    },
+    "task-planning": {
+      "status": "complete",
+      "attempt": 1,
+      "feedback": [],
+      "updatedAt": "2026-10-03T07:55:15.588Z"
+    },
+    "code-generation": {
+      "status": "complete",
+      "attempt": 1,
+      "feedback": [],
+      "updatedAt": "2026-10-03T08:31:32.167Z"
+    },
+    "code-review": {
+      "status": "complete",
+      "attempt": 1,
+      "feedback": [],
+      "updatedAt": "2026-10-03T08:48:27.638Z"
+    },
+    "refactor": {
+      "status": "skipped",
+      "attempt": 1,
+      "feedback": [],
+      "updatedAt": "2026-10-03T08:48:27.677Z"
+    },
+    "test-plan": {
+      "status": "active",
+      "attempt": 1,
+      "feedback": [],
+      "updatedAt": "2026-10-03T08:48:27.677Z"
+    }
+  },
+  "startedAt": "2026-10-03T07:46:50.254Z",
+  "updatedAt": "2026-10-03T08:48:31.799Z"
+}
