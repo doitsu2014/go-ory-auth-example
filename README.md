@@ -22,7 +22,11 @@ This one command:
 3. waits until every service is healthy;
 4. creates the first `super_admin` (`admin@example.local`, override with
    `ADMIN_EMAIL=...`) and prints a one-time recovery link;
-5. prints the URLs.
+5. seeds 5 demo customers (`customer01..05@example.local`, password
+   `SEED_CUSTOMER_PASSWORD` in `.env`) with encrypted phone, date of birth,
+   address and national id, through the real registration flow (needs Node >= 22;
+   skipped with a hint otherwise);
+6. prints the URLs.
 
 Then open the recovery link, set a password and enrol TOTP (MFA is mandatory
 for admins). All emails land in Mailpit at http://localhost:8025.
@@ -42,6 +46,7 @@ Other commands (`./dev help`):
 | `./dev status` | container state and health probes |
 | `./dev logs [service]` | follow logs |
 | `./dev seed EMAIL` | create another super_admin |
+| `./dev seed-customers` | 5 demo customers with encrypted personal info (Node >= 22) |
 | `./dev smoke` | end-to-end smoke test (Node >= 22) |
 | `./dev mobile [android\|ios]` | run the Flutter app against the stack (Flutter SDK) |
 | `./dev web` | admin web with Vite hot reload instead of the container (pnpm) |
