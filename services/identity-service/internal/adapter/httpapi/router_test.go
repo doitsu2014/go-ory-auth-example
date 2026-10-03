@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,6 +20,7 @@ import (
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/adapter/localkms"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/app"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/identity"
+	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/machine"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/platform"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/testutil"
 )
@@ -37,6 +39,11 @@ type fixture struct {
 	customer uuid.UUID
 	target   uuid.UUID
 	seq      atomic.Int64
+	// Machine plane.
+	kratos   *testutil.Verifier
+	mv       *testutil.MachineVerifier
+	clients  *testutil.ServiceClients
+	clientID string
 }
 
 // syncBuffer is a goroutine-safe log sink.
@@ -103,6 +110,15 @@ func newFixture(t *testing.T) *fixture {
 	target := ids.Add(identity.Identity{SchemaID: "admin", Email: "t@example.com", HasTOTP: true, TOTPCreatedAt: now, CreatedAt: now})
 	roles.M[target.ID] = []identity.Role{identity.RoleSupport}
 
+	mv := testutil.NewMachineVerifier()
+	mv.Tokens["m2m-cust"] = machine.Principal{ClientID: "client-cust", Scopes: []machine.Scope{machine.ScopeCustomersRead}, TokenID: "jti-cust"}
+	mv.Tokens["m2m-audit"] = machine.Principal{ClientID: "client-audit", Scopes: []machine.Scope{machine.ScopeAuditRead}, TokenID: "jti-audit"}
+	mv.Errs["m2m-down"] = fmt.Errorf("%w: hydra", app.ErrDependencyUnavailable)
+	clients := testutil.NewServiceClients(clock)
+	sc, _, _ := clients.Create(context.Background(), app.NewServiceClient{Registration: machine.Registration{
+		Name: "existing", Owner: "ops@example.com", Scopes: []machine.Scope{machine.ScopeAuditRead},
+	}})
+
 	repos := store.Repos()
 	kms := localkms.NewRandom()
 	cache := app.NewDEKCache(100, time.Minute, clock.Now)
@@ -120,16 +136,22 @@ func newFixture(t *testing.T) *fixture {
 			LookupLimiter: app.NewRateLimiter(app.LookupRateRules, clock.Now),
 			RevealLimiter: app.NewRateLimiter(app.RevealRateRules, clock.Now),
 		},
+		Machine: &app.MachineService{Identities: ids, Audit: repos.Audit},
+		ServiceClients: &app.ServiceClientService{Authz: authz, Clients: clients, Verifier: mv, Tx: store,
+			Idempotency: repos.Idempotency, Clock: clock, Log: log},
 	}
 	h, err := NewPublicHandler(PublicDeps{
 		Log: log, Metrics: NewMetrics(), Server: server, Verifier: v, Authz: app.MemoAuthorizer{Next: authz},
-		Gate:           &app.AdminGate{Identities: ids, Sessions: v, Tx: store, Clock: clock},
-		AllowedOrigins: []string{origin},
+		Gate:            &app.AdminGate{Identities: ids, Sessions: v, Tx: store, Clock: clock},
+		AllowedOrigins:  []string{origin},
+		MachineVerifier: mv, MachineClientLimiter: NewMachineClientLimiter(5, clock.Now),
+		MachineFailureLimiter: NewMachineFailureLimiter(clock.Now),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &fixture{h: h, ids: ids, store: store, kms: kms, cache: cache, logs: logs, customer: cust.ID, target: target.ID}
+	return &fixture{h: h, ids: ids, store: store, kms: kms, cache: cache, logs: logs, customer: cust.ID, target: target.ID,
+		kratos: v, mv: mv, clients: clients, clientID: sc.ClientID}
 }
 
 type route struct {
@@ -172,6 +194,15 @@ func routes() []route {
 		{method: "GET", path: "/admin/v1/customers/{customer}/personal-info", okStatus: 200, admin: true, supportOK: true},
 		{method: "POST", path: "/admin/v1/customers/{customer}/personal-info/reveal", body: func(*fixture) string { return `{"reason_code":"legal_request"}` },
 			okStatus: 200, admin: true, mutation: true},
+		// Service clients (super_admin only).
+		{method: "GET", path: "/admin/v1/service-clients", okStatus: 200, admin: true},
+		{method: "POST", path: "/admin/v1/service-clients", header: idem, okStatus: 201, admin: true, mutation: true,
+			body: func(f *fixture) string {
+				return fmt.Sprintf(`{"name":"client-%d","owner":"ops@example.com","scopes":["audit:read"]}`, f.seq.Add(1))
+			}},
+		{method: "GET", path: "/admin/v1/service-clients/{client}", okStatus: 200, admin: true},
+		{method: "POST", path: "/admin/v1/service-clients/{client}/rotate-secret", okStatus: 200, admin: true, mutation: true},
+		{method: "DELETE", path: "/admin/v1/service-clients/{client}", okStatus: 204, admin: true, mutation: true},
 	}
 }
 
@@ -183,7 +214,7 @@ type cred struct {
 
 func (f *fixture) do(t *testing.T, rt route, c cred) *httptest.ResponseRecorder {
 	t.Helper()
-	path := strings.NewReplacer("{customer}", f.customer.String(), "{target}", f.target.String()).Replace(rt.path)
+	path := strings.NewReplacer("{customer}", f.customer.String(), "{target}", f.target.String(), "{client}", f.clientID).Replace(rt.path)
 	var body io.Reader = http.NoBody
 	if rt.body != nil {
 		body = bytes.NewBufferString(rt.body(f))

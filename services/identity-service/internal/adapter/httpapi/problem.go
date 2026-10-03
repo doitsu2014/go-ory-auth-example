@@ -30,6 +30,10 @@ const (
 	CodeRateLimited           = "rate_limited"
 	CodeInternal              = "internal"
 	CodeMethodNotAllowed      = "method_not_allowed"
+	// Machine plane (RFC 6750 §3.1 error codes, also in WWW-Authenticate).
+	CodeInvalidRequest    = "invalid_request"
+	CodeInvalidToken      = "invalid_token"
+	CodeInsufficientScope = "insufficient_scope"
 )
 
 type problemSpec struct {
@@ -52,6 +56,9 @@ var problemSpecs = map[string]problemSpec{
 	CodeRateLimited:           {http.StatusTooManyRequests, "Too many requests", "rate-limited"},
 	CodeInternal:              {http.StatusInternalServerError, "Internal error", "internal"},
 	CodeMethodNotAllowed:      {http.StatusMethodNotAllowed, "Method not allowed", "method-not-allowed"},
+	CodeInvalidRequest:        {http.StatusBadRequest, "Invalid request", "invalid-request"},
+	CodeInvalidToken:          {http.StatusUnauthorized, "Invalid access token", "invalid-token"},
+	CodeInsufficientScope:     {http.StatusForbidden, "Insufficient scope", "insufficient-scope"},
 }
 
 // writeProblem writes an RFC 9457 problem. detail must never carry internals.
@@ -74,8 +81,11 @@ func writeProblem(w http.ResponseWriter, r *http.Request, code, detail string, f
 		}
 		p.Errors = &fe
 	}
-	if spec.status == http.StatusUnauthorized && planeOf(r) == PlaneCustomer {
+	switch plane := planeOf(r); {
+	case spec.status == http.StatusUnauthorized && plane == PlaneCustomer:
 		w.Header().Set("WWW-Authenticate", `Bearer realm="identity-service"`)
+	case plane == PlaneMachine:
+		setMachineChallenge(w, r, code)
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(spec.status)
@@ -110,6 +120,10 @@ func classify(err error) (code string, fields []app.FieldError) {
 		return CodeDependencyUnavailable, nil
 	case errors.Is(err, app.ErrRateLimited):
 		return CodeRateLimited, nil
+	case errors.Is(err, app.ErrInvalidToken):
+		return CodeInvalidToken, nil
+	case errors.Is(err, app.ErrInsufficientScope):
+		return CodeInsufficientScope, nil
 	}
 	return CodeInternal, nil
 }
@@ -152,4 +166,25 @@ func (e errorWriter) paramError(w http.ResponseWriter, r *http.Request, err erro
 		field, code = reqP.ParamName, "required"
 	}
 	writeProblem(w, r, CodeValidationFailed, "", []app.FieldError{{Field: field, Code: code}})
+}
+
+// setMachineChallenge sets the RFC 6750 §3 challenge on machine-plane 401
+// and 403 responses. Values are fixed strings or a scope from the closed
+// enum; nothing from the request is echoed.
+func setMachineChallenge(w http.ResponseWriter, r *http.Request, code string) {
+	const realm = `Bearer realm="identity-service"`
+	switch code {
+	case CodeUnauthenticated:
+		w.Header().Set("WWW-Authenticate", realm)
+	case CodeInvalidRequest:
+		w.Header().Set("WWW-Authenticate", realm+`, error="invalid_request"`)
+	case CodeInvalidToken:
+		w.Header().Set("WWW-Authenticate", realm+`, error="invalid_token"`)
+	case CodeInsufficientScope:
+		v := realm + `, error="insufficient_scope"`
+		if sc := requiredScopeFrom(r.Context()); sc != "" {
+			v += `, scope="` + string(sc) + `"`
+		}
+		w.Header().Set("WWW-Authenticate", v)
+	}
 }

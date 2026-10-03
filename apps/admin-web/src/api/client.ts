@@ -23,6 +23,11 @@ export type RevealReasonCode = RevealRequest["reason_code"];
 export type PiiField = NonNullable<RevealRequest["fields"]>[number];
 export type CustomerLookupResult = Schemas["CustomerLookupResult"];
 export type CustomerLookupItem = CustomerLookupResult["items"][number];
+export type MachineScope = Schemas["MachineScope"];
+export type ServiceClient = Schemas["ServiceClient"];
+export type ServiceClientWithSecret = Schemas["ServiceClientWithSecret"];
+export type ServiceClientList = Schemas["ServiceClientList"];
+export type CreateServiceClientRequest = Schemas["CreateServiceClientRequest"];
 
 export const ROLES: readonly Role[] = ["support", "admin", "super_admin"];
 
@@ -39,6 +44,8 @@ export const PII_FIELDS: readonly PiiField[] = [
   "address",
   "national_id",
 ];
+
+export const MACHINE_SCOPES: readonly MachineScope[] = ["customers:read", "audit:read"];
 
 /**
  * Typed identity-service client generated from the OpenAPI contract.

@@ -12,6 +12,7 @@ x-kratos-env: &kratos-env
 services:
   postgres:
     image: postgres:16-alpine
+    networks: [default, hydra-db]
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in deploy/compose/.env}
@@ -119,6 +120,59 @@ services:
       timeout: 3s
       retries: 30
 
+  # Ory Hydra: OAuth2 server for machine-to-machine access (ADR-0012).
+  hydra-db:
+    image: postgres:16-alpine
+    entrypoint: ["/bin/sh", "/provision/hydra.sh"]
+    environment:
+      PGHOST: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      HYDRA_DB_PASSWORD: ${HYDRA_DB_PASSWORD:?}
+    volumes:
+      - ../postgres/provision/hydra.sh:/provision/hydra.sh:ro
+    networks: [hydra-db]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  hydra-migrate:
+    image: oryd/hydra:v26.2.0
+    command: ["migrate", "sql", "up", "-e", "--yes", "--config", "/etc/config/hydra/hydra.yml"]
+    environment: &hydra-env
+      DSN: postgres://hydra:${HYDRA_DB_PASSWORD:?}@postgres:5432/hydra?sslmode=disable&max_conns=20&max_idle_conns=4
+      SECRETS_SYSTEM: ${HYDRA_SECRETS_SYSTEM:?}
+    volumes:
+      - ../ory/hydra/hydra.yml:/etc/config/hydra/hydra.yml:ro
+    networks: [hydra-db]
+    restart: "no"
+    depends_on:
+      hydra-db:
+        condition: service_completed_successfully
+
+  hydra:
+    image: oryd/hydra:v26.2.0
+    # --dev allows plain HTTP locally (like Kratos); never in production.
+    command: ["serve", "all", "--dev", "--config", "/etc/config/hydra/hydra.yml"]
+    environment: *hydra-env
+    volumes:
+      - ../ory/hydra/hydra.yml:/etc/config/hydra/hydra.yml:ro
+    # Not on `default`: only identity-service (network `hydra`) can reach the
+    # unauthenticated admin API; Postgres is reached via `hydra-db`.
+    networks: [hydra, hydra-db]
+    ports:
+      - "4444:4444"
+      - "127.0.0.1:4445:4445"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4445/health/ready"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    depends_on:
+      hydra-migrate:
+        condition: service_completed_successfully
+
   # Key manager for PII envelope encryption (KEK + blind-index key in Transit).
   openbao:
     image: openbao/openbao:2.4.1
@@ -171,6 +225,7 @@ services:
   identity-service:
     profiles: ["app"]
     image: go-ory-auth-example/identity-service:local
+    networks: [default, hydra]
     build:
       context: ../../services/identity-service
     environment:
@@ -194,6 +249,11 @@ services:
       PII_KMS_PROVIDER: openbao
       PII_OPENBAO_ADDR: http://openbao:8200
       PII_OPENBAO_TOKEN_FILE: /run/openbao/identity-service.token
+      HYDRA_ADMIN_URL: http://hydra:4445
+      M2M_JWKS_URL: http://hydra:4444/.well-known/jwks.json
+      M2M_ISSUER: http://localhost:4444
+      M2M_AUDIENCE: identity-service
+      M2M_CLIENT_TAG_KEY: ${M2M_CLIENT_TAG_KEY:?}
     volumes:
       - openbao-app-token:/run/openbao:ro
     healthcheck:
@@ -214,8 +274,17 @@ services:
         condition: service_healthy
       keto:
         condition: service_healthy
+      hydra:
+        condition: service_healthy
       openbao-init:
         condition: service_completed_successfully
+
+networks:
+  default:
+  # identity-service <-> Hydra only (admin API has no authentication).
+  hydra:
+  # Hydra <-> Postgres only.
+  hydra-db:
 
 volumes:
   pgdata:

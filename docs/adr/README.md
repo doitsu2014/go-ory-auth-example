@@ -17,6 +17,7 @@ supersedes it.
 | [0009](0009-go-service-architecture.md) | Hexagonal Go service: chi, pgx + sqlc, goose, oapi-codegen | Proposed |
 | [0010](0010-contract-first-api.md) | Contract-first OpenAPI 3.0.3 with RFC 9457 errors | Proposed |
 | [0011](0011-envelope-encryption-for-pii.md) | Envelope encryption with OpenBao Transit for customer PII | Proposed |
+| [0012](0012-hydra-for-machine-to-machine.md) | Ory Hydra for machine-to-machine access | Proposed |
 
 Status flow: Proposed → Accepted (owner review) → Superseded / Deprecated.
 

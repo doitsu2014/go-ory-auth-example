@@ -23,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/adapter/httpapi"
+	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/adapter/hydra"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/adapter/keto"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/adapter/kratos"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/adapter/mailer"
@@ -48,6 +49,9 @@ type stack struct {
 	bao      *openbao.Client
 	pii      *app.PersonalInfoService
 	logs     *syncBuffer
+	// Machine plane (Hydra).
+	hydra   *hydra.Admin
+	machine *hydra.Verifier
 }
 
 // syncBuffer captures the service logs of one stack (PII-NFR-04).
@@ -124,7 +128,20 @@ func newStackWith(t *testing.T, o stackOpts) *stack {
 		SubjectKeys: repos.SubjectKeys, Records: repos.PersonalInfo, Clock: app.SystemClock{}, Log: log,
 		LookupLimiter: app.NewRateLimiter(app.LookupRateRules, nil), RevealLimiter: app.NewRateLimiter(app.RevealRateRules, nil),
 	}
+	hadmin, err := hydra.NewAdmin(env.HydraAdmin, "identity-service", env.ClientTagKey, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mverifier, err := hydra.NewVerifier(hydra.VerifierConfig{
+		JWKSURL: env.JWKSURL(), Issuer: env.HydraIssuer, Audience: "identity-service", Admin: hadmin, Log: log,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	server := &httpapi.Server{
+		Machine: &app.MachineService{Identities: kadmin, Audit: repos.Audit},
+		ServiceClients: &app.ServiceClientService{Authz: authz, Clients: hadmin, Verifier: mverifier, Tx: store,
+			Idempotency: repos.Idempotency, Clock: app.SystemClock{}, Log: log},
 		Me:           &app.MeService{Profiles: repos.Profiles},
 		Customers:    &app.CustomerService{Authz: authz, Identities: kadmin, Profiles: repos.Profiles, Tx: store, Sessions: verifier, Log: log},
 		Admins:       admins,
@@ -133,8 +150,9 @@ func newStackWith(t *testing.T, o stackOpts) *stack {
 	}
 	h, err := httpapi.NewPublicHandler(httpapi.PublicDeps{
 		Log: log, Metrics: httpapi.NewMetrics(), Server: server, Verifier: verifier, Authz: authz,
-		Gate:           &app.AdminGate{Identities: kadmin, Sessions: verifier, Tx: store, Clock: app.SystemClock{}, Log: log, MFAGrace: grace},
-		AllowedOrigins: []string{webOrigin},
+		Gate:            &app.AdminGate{Identities: kadmin, Sessions: verifier, Tx: store, Clock: app.SystemClock{}, Log: log, MFAGrace: grace},
+		AllowedOrigins:  []string{webOrigin},
+		MachineVerifier: mverifier,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -142,7 +160,7 @@ func newStackWith(t *testing.T, o stackOpts) *stack {
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	return &stack{kadmin: kadmin, env: env, srv: srv, verifier: verifier, keto: k, admins: admins,
-		store: store, pool: pool, bao: bao, pii: pi, logs: logs}
+		store: store, pool: pool, bao: bao, pii: pi, logs: logs, hydra: hadmin, machine: mverifier}
 }
 
 type call struct {
@@ -304,7 +322,7 @@ func TestFR06_E2E_AdminPlane(t *testing.T) {
 		Permissions []string  `json:"permissions"`
 	}
 	if st := s.api(t, "GET", "/admin/v1/me", call{cookie: cookie}, nil, &me); st != 200 || me.ID != adminID || me.AAL != "aal2" ||
-		len(me.Roles) != 1 || me.Roles[0] != "super_admin" || len(me.Permissions) != 5 {
+		len(me.Roles) != 1 || me.Roles[0] != "super_admin" || len(me.Permissions) != 6 {
 		t.Fatalf("admin me: %d %+v", st, me)
 	}
 

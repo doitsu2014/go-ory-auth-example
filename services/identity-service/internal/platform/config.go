@@ -69,6 +69,40 @@ type Config struct {
 	PIILocalBidxKey string        `env:"PII_LOCAL_BIDX_KEY"`
 	PIIDEKCacheTTL  time.Duration `env:"PII_DEK_CACHE_TTL" envDefault:"5m"`
 	PIIDEKCacheSize int           `env:"PII_DEK_CACHE_SIZE" envDefault:"10000"`
+
+	// Machine-to-machine access with Ory Hydra (intent 261003-add-ory-hydra).
+	// The admin API is unauthenticated: reachable by identity-service only.
+	HydraAdminURL string `env:"HYDRA_ADMIN_URL" envDefault:"http://127.0.0.1:4445"`
+	M2MJWKSURL    string `env:"M2M_JWKS_URL" envDefault:"http://localhost:4444/.well-known/jwks.json"`
+	// M2MIssuer must equal the token iss claim exactly (no normalisation).
+	M2MIssuer          string        `env:"M2M_ISSUER" envDefault:"http://localhost:4444"`
+	M2MAudience        string        `env:"M2M_AUDIENCE" envDefault:"identity-service"`
+	M2MClientCacheTTL  time.Duration `env:"M2M_CLIENT_CACHE_TTL" envDefault:"30s"`
+	M2MRateLimitPerMin int           `env:"M2M_RATE_LIMIT_PER_MIN" envDefault:"600"`
+	// M2MClientTagKey is a base64 key (≥ 32 bytes) for the HMAC integrity
+	// tag on managed Hydra clients (security S4). Secret: never log.
+	M2MClientTagKey string `env:"M2M_CLIENT_TAG_KEY"`
+}
+
+// ClientTagKey decodes M2M_CLIENT_TAG_KEY (standard or URL-safe base64,
+// padded or not) and requires at least 32 bytes.
+func (c Config) ClientTagKey() ([]byte, error) {
+	for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding} {
+		if b, err := enc.DecodeString(c.M2MClientTagKey); err == nil && len(b) >= 32 {
+			return b, nil
+		}
+	}
+	return nil, errors.New("M2M_CLIENT_TAG_KEY must be a base64 key of at least 32 bytes")
+}
+
+// Warnings lists risky but allowed settings, logged at startup.
+func (c Config) Warnings() []string {
+	var out []string
+	if !c.DevEnv() && c.TrustedProxyHops == 0 {
+		out = append(out, "TRUSTED_PROXY_HOPS=0 outside local/test: behind a proxy every caller shares the proxy address, "+
+			"so per-IP limits (machine-plane failures) apply to all callers together")
+	}
+	return out
 }
 
 // KMS providers.
@@ -136,6 +170,44 @@ func is32Base64(s string) bool {
 	return err == nil && len(b) == 32
 }
 
+// ValidateHydraAdmin checks the Hydra admin URL (serve and the clients CLI).
+func (c Config) ValidateHydraAdmin() error {
+	return c.httpsURL("HYDRA_ADMIN_URL", c.HydraAdminURL)
+}
+
+// ValidateM2M checks the machine-to-machine settings (§6 A11): https for
+// the issuer, JWKS and admin URLs unless APP_ENV is local or test.
+func (c Config) ValidateM2M() error {
+	errs := []error{c.ValidateHydraAdmin(), c.httpsURL("M2M_JWKS_URL", c.M2MJWKSURL), c.httpsURL("M2M_ISSUER", c.M2MIssuer)}
+	if u, err := url.Parse(c.M2MIssuer); err == nil && (u.RawQuery != "" || u.Fragment != "" || u.User != nil) {
+		errs = append(errs, errors.New("M2M_ISSUER must not carry a query, fragment or user info"))
+	}
+	if c.M2MAudience == "" {
+		errs = append(errs, errors.New("M2M_AUDIENCE is required"))
+	}
+	if _, err := c.ClientTagKey(); err != nil {
+		errs = append(errs, err)
+	}
+	if c.M2MClientCacheTTL <= 0 || c.M2MClientCacheTTL > 30*time.Second {
+		errs = append(errs, errors.New("M2M_CLIENT_CACHE_TTL must be in (0, 30s]"))
+	}
+	if c.M2MRateLimitPerMin <= 0 {
+		errs = append(errs, errors.New("M2M_RATE_LIMIT_PER_MIN must be > 0"))
+	}
+	return errors.Join(errs...)
+}
+
+func (c Config) httpsURL(name, v string) error {
+	u, err := url.Parse(v)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("%s must be an http(s) URL", name)
+	}
+	if u.Scheme == "http" && !c.DevEnv() {
+		return fmt.Errorf("%s must use https unless APP_ENV is local or test", name)
+	}
+	return nil
+}
+
 // LoadConfig parses the environment.
 func LoadConfig() (Config, error) {
 	var c Config
@@ -185,6 +257,9 @@ func (c Config) ValidateServe() error {
 		errs = append(errs, errors.New("ADMIN_INVITATION_TTL must be in (0, 24h]"))
 	}
 	if err := c.ValidatePII(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := c.ValidateM2M(); err != nil {
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)

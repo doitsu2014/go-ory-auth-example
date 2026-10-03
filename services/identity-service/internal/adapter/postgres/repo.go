@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -132,6 +133,16 @@ func (r AuditRepo) List(ctx context.Context, f audit.Filter) ([]audit.Event, err
 		t, id := f.After.OccurredAt, f.After.ID
 		p.AfterOccurredAt, p.AfterID = &t, &id
 	}
+	if len(f.Actions) > 0 || len(f.ActionPrefixes) > 0 {
+		// Non-nil empty slices: an allowlist that is set but empty matches nothing.
+		p.Actions, p.ActionPatterns = make([]string, 0, len(f.Actions)), make([]string, 0, len(f.ActionPrefixes))
+		for _, a := range f.Actions {
+			p.Actions = append(p.Actions, string(a))
+		}
+		for _, pre := range f.ActionPrefixes {
+			p.ActionPatterns = append(p.ActionPatterns, likeEscape(pre)+"%")
+		}
+	}
 	rows, err := r.q.ListAuditEvents(ctx, p)
 	if err != nil {
 		return nil, err
@@ -210,3 +221,8 @@ type Locker struct{ q *sqlcgen.Queries }
 
 // XactLock implements app.Locker.
 func (l Locker) XactLock(ctx context.Context, key int64) error { return l.q.AdvisoryXactLock(ctx, key) }
+
+// likeEscape escapes LIKE metacharacters (backslash is the default escape).
+func likeEscape(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
+}

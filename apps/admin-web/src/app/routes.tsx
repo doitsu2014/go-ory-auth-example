@@ -11,6 +11,7 @@ import { LoginPage } from "../features/login/LoginPage";
 import { NoAccessPage } from "../features/login/NoAccessPage";
 import { RegistrationDisabledPage } from "../features/login/RegistrationDisabledPage";
 import { RecoveryPage } from "../features/recovery/RecoveryPage";
+import { ServiceClientsPage } from "../features/service-clients/ServiceClientsPage";
 import { SettingsPage } from "../features/settings/SettingsPage";
 import { VerificationPage } from "../features/verification/VerificationPage";
 import { AuthLayout } from "./AuthLayout";
@@ -50,6 +51,7 @@ export function createRoutes(queryClient: QueryClient): RouteObject[] {
             { path: "/customers/:id", element: <CustomerDetailPage /> },
             { path: "/admins", element: <AdminsPage /> },
             { path: "/audit", element: <AuditPage /> },
+            { path: "/service-clients", element: <ServiceClientsPage /> },
           ],
         },
         { path: "*", loader: () => redirect("/") },

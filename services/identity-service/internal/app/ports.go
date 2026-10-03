@@ -11,6 +11,7 @@ import (
 
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/audit"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/identity"
+	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/machine"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/profile"
 )
 
@@ -35,6 +36,41 @@ type SessionVerifier interface {
 	Verify(ctx context.Context, cred Credential) (identity.Principal, error)
 	// Invalidate drops cached sessions of the identity.
 	Invalidate(identityID uuid.UUID)
+}
+
+// MachineTokenVerifier resolves a machine-plane bearer token (a Hydra
+// client_credentials JWT) to a service client principal.
+// Errors: ErrInvalidToken, ErrDependencyUnavailable.
+type MachineTokenVerifier interface {
+	Verify(ctx context.Context, token string) (machine.Principal, error)
+	// Invalidate drops the cached client status of the client (after a
+	// secret rotation or a delete on this replica).
+	Invalidate(clientID string)
+}
+
+// NewServiceClient is the input for registering a client at the
+// authorisation server.
+type NewServiceClient struct {
+	// ClientID is chosen by identity-service (a random UUID) so the
+	// registration can be tagged atomically and compensated after an
+	// ambiguous failure.
+	ClientID     string
+	Registration machine.Registration
+	CreatedBy    uuid.UUID
+}
+
+// ServiceClientAdmin is the authorisation server (Hydra) admin port. It only
+// ever sees and returns clients managed by identity-service; anything else is
+// ErrNotFound. Secrets are returned by Create only and never logged.
+// Errors: ErrNotFound, ErrDependencyUnavailable.
+type ServiceClientAdmin interface {
+	Create(ctx context.Context, in NewServiceClient) (client machine.ServiceClient, secret string, err error)
+	Get(ctx context.Context, clientID string) (machine.ServiceClient, error)
+	List(ctx context.Context) ([]machine.ServiceClient, error)
+	// SetSecret replaces the secret and records tokensValidAfter so tokens
+	// issued earlier are rejected (§6 B3).
+	SetSecret(ctx context.Context, clientID, secret string, tokensValidAfter time.Time) error
+	Delete(ctx context.Context, clientID string) error
 }
 
 // NewIdentity is the input for creating a Kratos identity.

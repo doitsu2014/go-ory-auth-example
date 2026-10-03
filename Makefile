@@ -5,8 +5,8 @@ COMPOSE := docker compose --env-file deploy/compose/.env -f deploy/compose/docke
 env: ## Create deploy/compose/.env from the example (local values only)
 	@test -f deploy/compose/.env || cp deploy/compose/.env.example deploy/compose/.env
 
-infra-up: env ## Start Postgres, Kratos, Keto, Mailpit, OpenBao (initialised + unsealed)
-	$(COMPOSE) up -d --wait postgres mailpit kratos keto openbao
+infra-up: env ## Start Postgres, Kratos, Keto, Hydra, Mailpit, OpenBao (initialised + unsealed)
+	$(COMPOSE) up -d --wait postgres mailpit kratos keto hydra openbao
 	$(COMPOSE) run --rm -T openbao-init
 
 up: env ## Start the full stack including identity-service
@@ -26,6 +26,8 @@ health: ## Check component readiness
 	@curl -fsS http://127.0.0.1:4434/admin/health/ready >/dev/null && echo "kratos admin: ok"
 	@curl -fsS http://127.0.0.1:4466/health/ready >/dev/null && echo "keto read: ok"
 	@curl -fsS http://127.0.0.1:4467/health/ready >/dev/null && echo "keto write: ok"
+	@curl -fsS http://localhost:4444/health/ready >/dev/null && echo "hydra public: ok"
+	@curl -fsS http://127.0.0.1:4445/health/ready >/dev/null && echo "hydra admin: ok"
 	@curl -fsS http://127.0.0.1:9090/readyz >/dev/null && echo "identity-service: ok" || echo "identity-service: not running"
 
 seed: ## Create the first super_admin (prints a one-time recovery link)

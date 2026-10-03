@@ -32,10 +32,16 @@ type PublicDeps struct {
 	Policies map[string]Policy
 	// RequestTimeout defaults to 10 s.
 	RequestTimeout time.Duration
+	// MachineVerifier enables /m2m/v1 (nil: the machine plane answers 503).
+	MachineVerifier app.MachineTokenVerifier
+	// MachineClientLimiter / MachineFailureLimiter default to 600 requests
+	// per client and 60 rejected authentications per IP, per minute.
+	MachineClientLimiter  *app.RateLimiter
+	MachineFailureLimiter *app.RateLimiter
 }
 
-// NewPublicHandler builds the :8080 handler (/v1, /admin/v1). It fails if any
-// route lacks a valid policy (P4).
+// NewPublicHandler builds the :8080 handler (/v1, /admin/v1, /m2m/v1). It
+// fails if any route lacks a valid policy (P4).
 func NewPublicHandler(d PublicDeps) (http.Handler, error) {
 	if d.Policies == nil {
 		d.Policies = RoutePolicies
@@ -62,6 +68,18 @@ func NewPublicHandler(d PublicDeps) (http.Handler, error) {
 	guard := &Guard{
 		Verifier: d.Verifier, Gate: d.Gate, Authz: d.Authz, Policies: d.Policies,
 		AllowedOrigins: d.AllowedOrigins, TrustedHops: d.TrustedHops, Errors: ew, Router: api,
+	}
+	if d.MachineVerifier != nil {
+		if d.MachineClientLimiter == nil {
+			d.MachineClientLimiter = NewMachineClientLimiter(DefaultMachineRatePerMin, nil)
+		}
+		if d.MachineFailureLimiter == nil {
+			d.MachineFailureLimiter = NewMachineFailureLimiter(nil)
+		}
+		guard.Machine = &MachineGuard{
+			Verifier: d.MachineVerifier, Policies: d.Policies, Router: api, ClientLimiter: d.MachineClientLimiter,
+			FailureLimiter: d.MachineFailureLimiter, TrustedHops: d.TrustedHops, Errors: ew, Log: d.Log,
+		}
 	}
 
 	root := chi.NewRouter()

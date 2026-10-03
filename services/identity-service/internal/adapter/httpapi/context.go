@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/app"
+	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/machine"
 )
 
 // Plane is the API plane a request belongs to.
@@ -22,6 +23,8 @@ const (
 	PlaneNone Plane = iota
 	PlaneCustomer
 	PlaneAdmin
+	// PlaneMachine is /m2m/v1: Hydra client_credentials JWTs only.
+	PlaneMachine
 )
 
 func planeOf(r *http.Request) Plane {
@@ -31,6 +34,8 @@ func planeOf(r *http.Request) Plane {
 		return PlaneCustomer
 	case p == "/admin/v1" || strings.HasPrefix(p, "/admin/v1/"):
 		return PlaneAdmin
+	case p == "/m2m/v1" || strings.HasPrefix(p, "/m2m/v1/"):
+		return PlaneMachine
 	}
 	return PlaneNone
 }
@@ -42,6 +47,10 @@ type reqState struct {
 	identityID  string
 	problemCode string
 	actor       *app.Actor
+	// Machine plane: the verified service client and the scope the matched
+	// route requires (for WWW-Authenticate on 403).
+	machine       *machine.Principal
+	requiredScope machine.Scope
 }
 
 type stateKey struct{}
@@ -74,6 +83,45 @@ func setActor(ctx context.Context, a app.Actor) {
 		s.identityID = a.Principal.IdentityID.String()
 		s.mu.Unlock()
 	}
+}
+
+func setMachine(ctx context.Context, p machine.Principal) {
+	if s := stateFrom(ctx); s != nil {
+		s.mu.Lock()
+		s.machine = &p
+		s.mu.Unlock()
+	}
+}
+
+func setRequiredScope(ctx context.Context, sc machine.Scope) {
+	if s := stateFrom(ctx); s != nil {
+		s.mu.Lock()
+		s.requiredScope = sc
+		s.mu.Unlock()
+	}
+}
+
+func requiredScopeFrom(ctx context.Context) machine.Scope {
+	if s := stateFrom(ctx); s != nil {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.requiredScope
+	}
+	return ""
+}
+
+// MachineFrom returns the service client set by the machine guard.
+func MachineFrom(ctx context.Context) (machine.Principal, bool) {
+	s := stateFrom(ctx)
+	if s == nil {
+		return machine.Principal{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.machine == nil {
+		return machine.Principal{}, false
+	}
+	return *s.machine, true
 }
 
 // ActorFrom returns the authenticated actor set by the auth middleware.

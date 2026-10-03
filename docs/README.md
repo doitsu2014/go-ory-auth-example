@@ -50,15 +50,16 @@ flowchart LR
 | 6 | [Security](architecture/06-security.md) | Threat model, controls, ASVS checklist |
 | 7 | [Cross-cutting concerns](architecture/07-cross-cutting.md) | Observability, config, errors, testing |
 | 8 | [PII protection](architecture/08-pii-protection.md) | Envelope encryption, blind index, masking/reveal, crypto-shredding, key lifecycle |
-| 8 | [Design principles](principles/01-design-principles.md) | The rules every change must respect |
-| 9 | [Go backend guidelines](principles/02-backend-go.md) | Service layout, libraries, coding rules |
-| 10 | [Admin web guidelines](principles/03-admin-web-react.md) | React SPA structure and auth handling |
-| 11 | [Mobile guidelines](principles/04-mobile-flutter.md) | Flutter structure and auth handling |
-| 12 | [API guidelines](principles/05-api-guidelines.md) | REST conventions, errors, versioning |
-| 13 | [identity-service API](api/identity-service-api.md) | Endpoint-level contract (v1) |
-| 14 | [Repository structure](repository-structure.md) | Monorepo layout |
-| 15 | [ADRs](adr/README.md) | Every significant decision and why |
-| 16 | [Roadmap](roadmap.md) | Build order (walking skeleton → features) |
+| 9 | [Machine-to-machine access](architecture/09-machine-access.md) | Ory Hydra client_credentials, JWT validation, `/m2m` plane, service clients |
+| 10 | [Design principles](principles/01-design-principles.md) | The rules every change must respect |
+| 11 | [Go backend guidelines](principles/02-backend-go.md) | Service layout, libraries, coding rules |
+| 12 | [Admin web guidelines](principles/03-admin-web-react.md) | React SPA structure and auth handling |
+| 13 | [Mobile guidelines](principles/04-mobile-flutter.md) | Flutter structure and auth handling |
+| 14 | [API guidelines](principles/05-api-guidelines.md) | REST conventions, errors, versioning |
+| 15 | [identity-service API](api/identity-service-api.md) | Endpoint-level contract (v1) |
+| 16 | [Repository structure](repository-structure.md) | Monorepo layout |
+| 17 | [ADRs](adr/README.md) | Every significant decision and why |
+| 18 | [Roadmap](roadmap.md) | Build order (walking skeleton → features) |
 
 ## Glossary
 
@@ -71,6 +72,9 @@ flowchart LR
 | **API (native) flow** | Kratos self-service flow for native apps; returns a session token. |
 | **Session** | Kratos authenticated session; cookie `ory_kratos_session` or a session token. |
 | **AAL** | Authenticator Assurance Level: `aal1` = one factor, `aal2` = MFA. |
-| **Relation tuple** | Keto fact, e.g. `Role:admin#members@User:<id>`. |
+| **Relation tuple** | Keto fact, e.g. `Console:main#admins@User:<id>`. |
+| **Service client** | A machine (job or partner system) registered in Hydra that gets `client_credentials` tokens. |
+| **Scope** | OAuth2 permission carried in a machine token (`customers:read`, `audit:read`). |
+| **DEK / KEK** | Data-encryption key (one per customer) and the key-encryption key in OpenBao that wraps it. |
 | **Customer** | End user of the mobile app. |
 | **Admin** | Operator using the admin web. Roles: `super_admin`, `admin`, `support`. |

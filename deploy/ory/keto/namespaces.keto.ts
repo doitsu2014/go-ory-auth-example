@@ -26,5 +26,9 @@ class Console implements Namespace {
 
     // Full (unmasked) customer PII; every use is audited.
     reveal_customer_pii: (ctx: Context): boolean => this.permits.manage_customers(ctx),
+
+    // Register, rotate and delete machine-to-machine OAuth2 clients (Hydra).
+    manage_service_clients: (ctx: Context): boolean =>
+      this.related.super_admins.includes(ctx.subject),
   }
 }

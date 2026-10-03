@@ -12,9 +12,12 @@ const KRATOS = process.env.KRATOS_PUBLIC_URL ?? "http://localhost:4433";
 const KRATOS_ADMIN = process.env.KRATOS_ADMIN_URL ?? "http://127.0.0.1:4434";
 const API = process.env.API_URL ?? "http://localhost:8080";
 const MAILPIT = process.env.MAILPIT_URL ?? "http://localhost:8025";
+const HYDRA = process.env.HYDRA_PUBLIC_URL ?? "http://localhost:4444";
+const HYDRA_ADMIN = process.env.HYDRA_ADMIN_URL ?? "http://127.0.0.1:4445";
 const ORIGIN = process.env.ADMIN_ORIGIN ?? "http://localhost:5173";
 
 const created = [];
+const createdClients = [];
 let failures = 0;
 
 function check(name, ok, extra = "") {
@@ -152,6 +155,55 @@ async function piiChecks(token, identityId) {
   }
 }
 
+// Machine-to-machine via Hydra client_credentials (M2M-FR-01..05, 13).
+async function m2mChecks(customerId, sessionToken) {
+  let out;
+  try {
+    out = execFileSync("docker", ["compose", "--env-file", "deploy/compose/.env", "-f", "deploy/compose/docker-compose.yml",
+      "--profile", "app", "exec", "-T", "identity-service", "/identity-service", "clients", "create",
+      "--name", `smoke-${randomBytes(3).toString("hex")}`, "--owner", "smoke@example.local", "--scope", "customers:read"], { encoding: "utf8" });
+  } catch {
+    check("M2M-FR-13 CLI creates a service client", false, "docker exec failed");
+    return;
+  }
+  const clientId = out.match(/client_id=(\S+)/)?.[1];
+  const secret = out.match(/client_secret[^:]*: (\S+)/)?.[1];
+  check("M2M-FR-13 CLI creates a service client (secret shown once)", !!clientId && !!secret);
+  if (!clientId || !secret) return;
+  createdClients.push(clientId);
+  const basic = "Basic " + Buffer.from(`${encodeURIComponent(clientId)}:${encodeURIComponent(secret)}`).toString("base64");
+  const token = async (params) => {
+    const r = await fetch(`${HYDRA}/oauth2/token`, { method: "POST",
+      headers: { Authorization: basic, "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(params) });
+    return [r.status, await json(r)];
+  };
+  const [ts, t] = await token({ grant_type: "client_credentials", scope: "customers:read", audience: "identity-service" });
+  check("M2M-FR-01 Hydra issues a client_credentials JWT", ts === 200 && t.access_token?.split(".").length === 3, `status ${ts}`);
+  const [bs, b] = await token({ grant_type: "client_credentials", scope: "audit:read", audience: "identity-service" });
+  check("M2M-FR-01 Hydra refuses a scope the client lacks", bs === 400 && b.error === "invalid_scope", `status ${bs} ${b.error ?? ""}`);
+  if (!t.access_token) return;
+  const bearer = { Authorization: `Bearer ${t.access_token}` };
+
+  let res = await fetch(`${API}/m2m/v1/customers/${customerId}`, { headers: bearer });
+  let body = await json(res);
+  check("M2M-FR-05 GET /m2m/v1/customers/{id} returns status without PII", res.status === 200 && body.id === customerId &&
+    !("email" in body) && !("name" in body), `status ${res.status}`);
+  res = await fetch(`${API}/m2m/v1/audit-events`, { headers: bearer });
+  check("M2M-FR-04 missing scope is 403 insufficient_scope", res.status === 403 &&
+    (res.headers.get("www-authenticate") ?? "").includes("insufficient_scope"), `status ${res.status}`);
+  res = await fetch(`${API}/m2m/v1/customers/${customerId}`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+  check("Plane binding: Kratos session token rejected on /m2m/v1", res.status === 401, `status ${res.status}`);
+  res = await fetch(`${API}/v1/me`, { headers: bearer });
+  check("Plane binding: Hydra JWT rejected on /v1", res.status === 401, `status ${res.status}`);
+  const [nas, na] = await token({ grant_type: "client_credentials", scope: "customers:read" });
+  if (nas === 200 && na.access_token) {
+    res = await fetch(`${API}/m2m/v1/customers/${customerId}`, { headers: { Authorization: `Bearer ${na.access_token}` } });
+    check("M2M-FR-03 token without audience is 401", res.status === 401, `status ${res.status}`);
+  } else {
+    check("M2M-FR-03 token without audience is 401", false, `Hydra did not issue the no-audience token (status ${nas})`);
+  }
+}
+
 async function main() {
   // ---- Customer: register (FR-01) ----
   const email = `smoke-${randomUUID()}@example.local`;
@@ -217,7 +269,9 @@ async function main() {
     });
     me = await json(res);
     check("FR-10 PATCH /v1/me after verification", res.status === 200 && me.display_name === "Smokey", `status ${res.status}`);
-    await piiChecks(login.body.session_token, reg.body.session?.identity?.id ?? login.body.session?.identity?.id);
+    const customerId = reg.body.session?.identity?.id ?? login.body.session?.identity?.id;
+    await piiChecks(login.body.session_token, customerId);
+    if (customerId) await m2mChecks(customerId, login.body.session_token);
   }
 
   // ---- Customer: native password recovery (FR-04) ----
@@ -293,6 +347,9 @@ try {
   console.error("ERROR", e);
   failures++;
 } finally {
+  for (const id of createdClients) {
+    await fetch(`${HYDRA_ADMIN}/admin/clients/${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => {});
+  }
   for (const id of created) {
     await fetch(`${KRATOS_ADMIN}/admin/identities/${id}`, { method: "DELETE" }).catch(() => {});
   }

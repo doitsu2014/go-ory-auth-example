@@ -55,16 +55,23 @@ FROM audit_event
 WHERE ($1::text IS NULL OR target_type = $1::text)
   AND ($2::text IS NULL OR target_id = $2::text)
   AND ($3::uuid IS NULL OR actor_identity_id = $3::uuid)
-  AND ($4::timestamptz IS NULL
-       OR (occurred_at, id) < ($4::timestamptz, $5::bigint))
+  -- Optional action allowlist (machine audit feed): exact names or LIKE
+  -- prefixes (escaped by the caller). Both NULL = no restriction.
+  AND (($4::text[] IS NULL AND $5::text[] IS NULL)
+       OR action = ANY(COALESCE($4::text[], '{}'::text[]))
+       OR action LIKE ANY(COALESCE($5::text[], '{}'::text[])))
+  AND ($6::timestamptz IS NULL
+       OR (occurred_at, id) < ($6::timestamptz, $7::bigint))
 ORDER BY occurred_at DESC, id DESC
-LIMIT $6
+LIMIT $8
 `
 
 type ListAuditEventsParams struct {
 	TargetType      *string
 	TargetID        *string
 	ActorID         uuid.NullUUID
+	Actions         []string
+	ActionPatterns  []string
 	AfterOccurredAt *time.Time
 	AfterID         *int64
 	PageLimit       int32
@@ -87,6 +94,8 @@ func (q *Queries) ListAuditEvents(ctx context.Context, arg ListAuditEventsParams
 		arg.TargetType,
 		arg.TargetID,
 		arg.ActorID,
+		arg.Actions,
+		arg.ActionPatterns,
 		arg.AfterOccurredAt,
 		arg.AfterID,
 		arg.PageLimit,

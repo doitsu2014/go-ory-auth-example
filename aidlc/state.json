@@ -2,12 +2,12 @@
   "workflowVersion": "1.0.0",
   "engineVersion": "0.1.0",
   "activeIntent": {
-    "id": "261003-encrypt-user-pii",
-    "label": "encrypt-user-pii",
-    "description": "Encrypt user PII at rest using industry-standard envelope encryption (AEAD + KMS-managed keys, blind index for lookups, crypto-shredding), on top of the existing Go identity service + Ory stack running in docker compose",
+    "id": "261003-add-ory-hydra",
+    "label": "add-ory-hydra",
+    "description": "Add Ory Hydra for machine-to-machine (OAuth2 client_credentials) access to identity-service: Hydra in docker compose, JWT access tokens validated offline via JWKS, a scope-protected machine API plane, service-client management for super admins",
     "scope": "feature",
     "space": "default",
-    "createdAt": "2026-10-03T07:46:50.254Z"
+    "createdAt": "2026-10-03T09:22:39.516Z"
   },
   "currentStage": "test-plan",
   "parked": true,
@@ -16,75 +16,75 @@
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T07:48:22.930Z"
+      "updatedAt": "2026-10-03T09:25:05.861Z"
     },
     "requirements-analysis": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T07:50:29.139Z"
+      "updatedAt": "2026-10-03T09:25:05.900Z"
     },
     "feasibility-assessment": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T07:51:26.092Z"
+      "updatedAt": "2026-10-03T09:25:05.941Z"
     },
     "architecture-design": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T07:52:42.339Z"
+      "updatedAt": "2026-10-03T09:27:12.421Z"
     },
     "api-contract": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T07:53:52.788Z"
+      "updatedAt": "2026-10-03T09:28:10.039Z"
     },
     "design-patterns": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T07:54:10.404Z"
+      "updatedAt": "2026-10-03T09:28:10.076Z"
     },
     "technical-spec": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T07:54:51.081Z"
+      "updatedAt": "2026-10-03T09:28:10.112Z"
     },
     "task-planning": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T07:55:15.588Z"
+      "updatedAt": "2026-10-03T09:28:42.179Z"
     },
     "code-generation": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T08:31:32.167Z"
+      "updatedAt": "2026-10-03T10:25:18.141Z"
     },
     "code-review": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T08:48:27.638Z"
+      "updatedAt": "2026-10-03T10:25:18.179Z"
     },
     "refactor": {
       "status": "skipped",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T08:48:27.677Z"
+      "updatedAt": "2026-10-03T10:25:18.216Z"
     },
     "test-plan": {
       "status": "active",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T08:48:27.677Z"
+      "updatedAt": "2026-10-03T10:25:18.217Z"
     }
   },
-  "startedAt": "2026-10-03T07:46:50.254Z",
-  "updatedAt": "2026-10-03T08:48:31.799Z"
+  "startedAt": "2026-10-03T09:22:39.517Z",
+  "updatedAt": "2026-10-03T10:25:18.253Z"
 }

@@ -63,3 +63,29 @@
 {"ts":"2026-10-03T08:48:27.677Z","engineVersion":"0.1.0","space":"default","intent":"261003-encrypt-user-pii","phase":"develop","stage":"refactor","result":"skipped","userInput":null,"reason":"All review findings were fixed in place; no structural debt worth a separate pass.","event":"STAGE_SKIPPED"}
 {"ts":"2026-10-03T08:48:27.677Z","engineVersion":"0.1.0","event":"STAGE_STARTED","space":"default","intent":"261003-encrypt-user-pii","phase":"launch","stage":"test-plan"}
 {"ts":"2026-10-03T08:48:31.799Z","engineVersion":"0.1.0","event":"WORKFLOW_PARKED","space":"default","intent":"261003-encrypt-user-pii","stage":"test-plan"}
+{"ts":"2026-10-03T09:22:39.517Z","engineVersion":"0.1.0","event":"INTENT_CREATED","space":"default","intent":"261003-add-ory-hydra","scope":"feature"}
+{"ts":"2026-10-03T09:22:39.517Z","engineVersion":"0.1.0","event":"SCOPE_SELECTED","space":"default","intent":"261003-add-ory-hydra","scope":"feature"}
+{"ts":"2026-10-03T09:22:39.518Z","engineVersion":"0.1.0","event":"STAGE_STARTED","space":"default","intent":"261003-add-ory-hydra","phase":"analyze","stage":"intent-capture"}
+{"ts":"2026-10-03T09:25:05.860Z","engineVersion":"0.1.0","space":"default","intent":"261003-add-ory-hydra","phase":"analyze","stage":"intent-capture","result":"approved","userInput":null,"reason":null,"event":"STAGE_APPROVED"}
+{"ts":"2026-10-03T09:25:05.861Z","engineVersion":"0.1.0","event":"STAGE_STARTED","space":"default","intent":"261003-add-ory-hydra","phase":"analyze","stage":"requirements-analysis"}
+{"ts":"2026-10-03T09:25:05.899Z","engineVersion":"0.1.0","space":"default","intent":"261003-add-ory-hydra","phase":"analyze","stage":"requirements-analysis","result":"approved","userInput":null,"reason":null,"event":"STAGE_APPROVED"}
+{"ts":"2026-10-03T09:25:05.900Z","engineVersion":"0.1.0","event":"STAGE_STARTED","space":"default","intent":"261003-add-ory-hydra","phase":"analyze","stage":"feasibility-assessment"}
+{"ts":"2026-10-03T09:25:05.941Z","engineVersion":"0.1.0","space":"default","intent":"261003-add-ory-hydra","phase":"analyze","stage":"feasibility-assessment","result":"approved","userInput":null,"reason":null,"event":"STAGE_APPROVED"}
+{"ts":"2026-10-03T09:25:05.942Z","engineVersion":"0.1.0","event":"STAGE_STARTED","space":"default","intent":"261003-add-ory-hydra","phase":"ideate","stage":"architecture-design"}
+{"ts":"2026-10-03T09:27:12.421Z","engineVersion":"0.1.0","space":"default","intent":"261003-add-ory-hydra","phase":"ideate","stage":"architecture-design","result":"approved","userInput":null,"reason":null,"event":"STAGE_APPROVED"}
+{"ts":"2026-10-03T09:27:12.421Z","engineVersion":"0.1.0","event":"STAGE_STARTED","space":"default","intent":"261003-add-ory-hydra","phase":"ideate","stage":"api-contract"}
+{"ts":"2026-10-03T09:28:10.038Z","engineVersion":"0.1.0","space":"default","intent":"261003-add-ory-hydra","phase":"ideate","stage":"api-contract","result":"approved","userInput":null,"reason":null,"event":"STAGE_APPROVED"}
+{"ts":"2026-10-03T09:28:10.039Z","engineVersion":"0.1.0","event":"STAGE_STARTED","space":"default","intent":"261003-add-ory-hydra","phase":"ideate","stage":"design-patterns"}
+{"ts":"2026-10-03T09:28:10.075Z","engineVersion":"0.1.0","space":"default","intent":"261003-add-ory-hydra","phase":"ideate","stage":"design-patterns","result":"approved","userInput":null,"reason":null,"event":"STAGE_APPROVED"}
+{"ts":"2026-10-03T09:28:10.076Z","engineVersion":"0.1.0","event":"STAGE_STARTED","space":"default","intent":"261003-add-ory-hydra","phase":"ideate","stage":"technical-spec"}
+{"ts":"2026-10-03T09:28:10.112Z","engineVersion":"0.1.0","space":"default","intent":"261003-add-ory-hydra","phase":"ideate","stage":"technical-spec","result":"approved","userInput":null,"reason":null,"event":"STAGE_APPROVED"}
+{"ts":"2026-10-03T09:28:10.113Z","engineVersion":"0.1.0","event":"STAGE_STARTED","space":"default","intent":"261003-add-ory-hydra","phase":"develop","stage":"task-planning"}
+{"ts":"2026-10-03T09:28:42.179Z","engineVersion":"0.1.0","space":"default","intent":"261003-add-ory-hydra","phase":"develop","stage":"task-planning","result":"approved","userInput":null,"reason":null,"event":"STAGE_APPROVED"}
+{"ts":"2026-10-03T09:28:42.180Z","engineVersion":"0.1.0","event":"STAGE_STARTED","space":"default","intent":"261003-add-ory-hydra","phase":"develop","stage":"code-generation"}
+{"ts":"2026-10-03T10:25:18.140Z","engineVersion":"0.1.0","space":"default","intent":"261003-add-ory-hydra","phase":"develop","stage":"code-generation","result":"approved","userInput":null,"reason":null,"event":"STAGE_APPROVED"}
+{"ts":"2026-10-03T10:25:18.141Z","engineVersion":"0.1.0","event":"STAGE_STARTED","space":"default","intent":"261003-add-ory-hydra","phase":"develop","stage":"code-review"}
+{"ts":"2026-10-03T10:25:18.179Z","engineVersion":"0.1.0","space":"default","intent":"261003-add-ory-hydra","phase":"develop","stage":"code-review","result":"approved","userInput":null,"reason":null,"event":"STAGE_APPROVED"}
+{"ts":"2026-10-03T10:25:18.179Z","engineVersion":"0.1.0","event":"STAGE_STARTED","space":"default","intent":"261003-add-ory-hydra","phase":"develop","stage":"refactor"}
+{"ts":"2026-10-03T10:25:18.216Z","engineVersion":"0.1.0","space":"default","intent":"261003-add-ory-hydra","phase":"develop","stage":"refactor","result":"skipped","userInput":null,"reason":"Review findings fixed in place; no structural debt.","event":"STAGE_SKIPPED"}
+{"ts":"2026-10-03T10:25:18.217Z","engineVersion":"0.1.0","event":"STAGE_STARTED","space":"default","intent":"261003-add-ory-hydra","phase":"launch","stage":"test-plan"}
+{"ts":"2026-10-03T10:25:18.253Z","engineVersion":"0.1.0","event":"WORKFLOW_PARKED","space":"default","intent":"261003-add-ory-hydra","stage":"test-plan"}

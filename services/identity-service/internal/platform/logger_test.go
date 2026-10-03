@@ -35,3 +35,21 @@ func TestT12_LogRedaction(t *testing.T) {
 		t.Fatalf("want 8 redactions: %s", out)
 	}
 }
+
+func TestM2M_LogRedactsOAuthSecrets(t *testing.T) {
+	var buf bytes.Buffer
+	log := NewLogger(&buf, "debug")
+	log.Info("m2m",
+		"client_secret", "leak1", "access_token", "leak2", "Authorization", "Bearer leak3",
+		"registration_access_token", "leak4", "jwt", "leak5", "client_id", "keep-me",
+	)
+	out := buf.String()
+	for i := 1; i <= 5; i++ {
+		if strings.Contains(out, "leak"+string(rune('0'+i))) {
+			t.Fatalf("leak%d: %s", i, out)
+		}
+	}
+	if !strings.Contains(out, "keep-me") {
+		t.Fatalf("client_id must be kept: %s", out)
+	}
+}

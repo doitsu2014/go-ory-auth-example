@@ -288,6 +288,109 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/m2m/v1/customers/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["IdentityId"];
+      };
+      cookie?: never;
+    };
+    /** Customer status for service clients (scope customers:read); no personal data */
+    get: operations["getMachineCustomer"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/m2m/v1/audit-events": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List audit events, newest first (scope audit:read)
+     * @description Filtered view: only allowlisted actions (customer state changes, admin.*,
+     *     service_client.*) and allowlisted detail keys. Personal-data actions
+     *     (`customer.pii.*`) are never exposed to machines.
+     */
+    get: operations["listMachineAuditEvents"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/admin/v1/service-clients": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List machine clients managed by identity-service (permission manage_service_clients) */
+    get: operations["listServiceClients"];
+    put?: never;
+    /**
+     * Register a client_credentials client (permission manage_service_clients; secret returned once)
+     * @description The secret is in this response only and is never stored by identity-service.
+     *     A replay with the same Idempotency-Key returns the client without `client_secret`;
+     *     use rotate-secret if it was lost.
+     */
+    post: operations["createServiceClient"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/admin/v1/service-clients/{client_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        client_id: components["parameters"]["ClientId"];
+      };
+      cookie?: never;
+    };
+    /** Get one machine client (permission manage_service_clients) */
+    get: operations["getServiceClient"];
+    put?: never;
+    post?: never;
+    /** Delete a machine client; its tokens stop working within 30 s (permission manage_service_clients) */
+    delete: operations["deleteServiceClient"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/admin/v1/service-clients/{client_id}/rotate-secret": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        client_id: components["parameters"]["ClientId"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Replace the client secret; the old one stops working immediately (permission manage_service_clients) */
+    post: operations["rotateServiceClientSecret"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/internal/hooks/kratos/after-registration": {
     parameters: {
       query?: never;
@@ -338,7 +441,8 @@ export interface components {
       /**
        * @description Stable machine code. Known values: unauthenticated, forbidden, not_admin,
        *     aal2_required, mfa_enrollment_required, email_not_verified, not_found,
-       *     conflict, validation_failed, rate_limited, dependency_unavailable, internal.
+       *     conflict, validation_failed, rate_limited, dependency_unavailable, internal,
+       *     invalid_token, insufficient_scope (machine plane; also sent in `WWW-Authenticate`).
        *     Clients must tolerate unknown values.
        */
       code: string;
@@ -365,7 +469,8 @@ export interface components {
       | "manage_customers"
       | "manage_admins"
       | "view_audit"
-      | "reveal_customer_pii";
+      | "reveal_customer_pii"
+      | "manage_service_clients";
     Me: {
       /** Format: uuid */
       id: string;
@@ -469,6 +574,66 @@ export interface components {
         state?: components["schemas"]["IdentityState"];
         personal_info: components["schemas"]["MaskedPersonalInfo"];
       }[];
+    };
+    /** @enum {string} */
+    MachineScope: "customers:read" | "audit:read";
+    MachineCustomer: {
+      /** Format: uuid */
+      id: string;
+      state: components["schemas"]["IdentityState"];
+      email_verified: boolean;
+      /** Format: date-time */
+      created_at: string;
+    };
+    MachineAuditEvent: {
+      /** Format: int64 */
+      id: number;
+      /** Format: date-time */
+      occurred_at: string;
+      /** Format: uuid */
+      actor_id: string;
+      action: string;
+      target_type: string;
+      target_id: string;
+      /** @description Allowlisted keys only (role, previous_role, scopes, name). */
+      details?: {
+        role?: string;
+        previous_role?: string;
+        scopes?: string[];
+        name?: string;
+      };
+    };
+    MachineAuditEventPage: {
+      items: components["schemas"]["MachineAuditEvent"][];
+      next_page_token?: string | null;
+    };
+    CreateServiceClientRequest: {
+      /** @example billing-sync */
+      name: string;
+      /**
+       * Format: email
+       * @description Contact responsible for the client
+       */
+      owner: string;
+      scopes: components["schemas"]["MachineScope"][];
+    };
+    ServiceClient: {
+      client_id: string;
+      name: string;
+      /** Format: email */
+      owner: string;
+      scopes: components["schemas"]["MachineScope"][];
+      /** Format: date-time */
+      created_at: string;
+      /** Format: uuid */
+      created_by?: string | null;
+    };
+    ServiceClientWithSecret: components["schemas"]["ServiceClient"] & {
+      /** @description Present only on create and rotate. Never stored by identity-service. */
+      client_secret?: string;
+    };
+    ServiceClientList: {
+      items: components["schemas"]["ServiceClient"][];
     };
     AdminMe: {
       /** Format: uuid */
@@ -582,6 +747,7 @@ export interface components {
     };
   };
   parameters: {
+    ClientId: string;
     IdentityId: string;
     PageSize: number;
     PageToken: string;
@@ -1067,6 +1233,193 @@ export interface operations {
       };
       401: components["responses"]["Problem"];
       403: components["responses"]["Problem"];
+    };
+  };
+  getMachineCustomer: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: components["parameters"]["IdentityId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["MachineCustomer"];
+        };
+      };
+      401: components["responses"]["Problem"];
+      403: components["responses"]["Problem"];
+      404: components["responses"]["Problem"];
+      429: components["responses"]["Problem"];
+      503: components["responses"]["Problem"];
+    };
+  };
+  listMachineAuditEvents: {
+    parameters: {
+      query?: {
+        target_type?: string;
+        target_id?: string;
+        actor_id?: string;
+        page_size?: components["parameters"]["PageSize"];
+        page_token?: components["parameters"]["PageToken"];
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["MachineAuditEventPage"];
+        };
+      };
+      401: components["responses"]["Problem"];
+      403: components["responses"]["Problem"];
+      429: components["responses"]["Problem"];
+      503: components["responses"]["Problem"];
+    };
+  };
+  listServiceClients: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ServiceClientList"];
+        };
+      };
+      401: components["responses"]["Problem"];
+      403: components["responses"]["Problem"];
+      503: components["responses"]["Problem"];
+    };
+  };
+  createServiceClient: {
+    parameters: {
+      query?: never;
+      header: {
+        "Idempotency-Key": string;
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreateServiceClientRequest"];
+      };
+    };
+    responses: {
+      /** @description Created */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ServiceClientWithSecret"];
+        };
+      };
+      401: components["responses"]["Problem"];
+      403: components["responses"]["Problem"];
+      409: components["responses"]["Problem"];
+      422: components["responses"]["Problem"];
+      503: components["responses"]["Problem"];
+    };
+  };
+  getServiceClient: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        client_id: components["parameters"]["ClientId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description OK */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ServiceClient"];
+        };
+      };
+      401: components["responses"]["Problem"];
+      403: components["responses"]["Problem"];
+      404: components["responses"]["Problem"];
+      503: components["responses"]["Problem"];
+    };
+  };
+  deleteServiceClient: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        client_id: components["parameters"]["ClientId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Deleted */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      401: components["responses"]["Problem"];
+      403: components["responses"]["Problem"];
+      404: components["responses"]["Problem"];
+      503: components["responses"]["Problem"];
+    };
+  };
+  rotateServiceClientSecret: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        client_id: components["parameters"]["ClientId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description New secret (shown once) */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ServiceClientWithSecret"];
+        };
+      };
+      401: components["responses"]["Problem"];
+      403: components["responses"]["Problem"];
+      404: components["responses"]["Problem"];
+      503: components["responses"]["Problem"];
     };
   };
   kratosAfterRegistration: {

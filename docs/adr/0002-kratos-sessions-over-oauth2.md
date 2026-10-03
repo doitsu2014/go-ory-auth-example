@@ -31,6 +31,10 @@ Kratos `/sessions/whoami`. Hydra is **not** deployed.
 - API validation needs a Kratos round trip (mitigated by caching, ADR-0006).
 - Tokens are opaque; other services must also ask Kratos (or a gateway).
 
+> **2026-10-03:** Revisited for machine-to-machine clients. See
+> [ADR-0012](0012-hydra-for-machine-to-machine.md). Hydra is added for
+> `client_credentials` only. This ADR still holds for first-party apps.
+
 ## Revisit when
 
 A third-party client, "Sign in with <our product>", SSO across independent

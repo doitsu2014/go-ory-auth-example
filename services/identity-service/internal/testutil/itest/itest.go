@@ -37,6 +37,12 @@ type Env struct {
 	// OpenBaoAddr and OpenBaoTokenFile reach the local OpenBao with the
 	// identity-service app token (`make bao-token` at the repo root).
 	OpenBaoAddr, OpenBaoTokenFile string
+	// HydraAdmin (127.0.0.1 only) and HydraPublic (token endpoint, JWKS).
+	// HydraIssuer is the exact iss of Hydra tokens.
+	HydraAdmin, HydraPublic, HydraIssuer string
+	// ClientTagKey is the in-process service's M2M_CLIENT_TAG_KEY (tests run
+	// their own service instance, so any ≥ 32-byte key works).
+	ClientTagKey []byte
 }
 
 // RepoRoot walks up from the working directory to the repository root
@@ -87,6 +93,10 @@ func Load() Env {
 		OpenBaoAddr:  getenv("PII_OPENBAO_ADDR", "http://127.0.0.1:8200"),
 		OpenBaoTokenFile: getenv("PII_OPENBAO_TOKEN_FILE",
 			filepath.Join(RepoRoot(), "deploy", "compose", ".local", "identity-service.token")),
+		HydraAdmin:   getenv("HYDRA_ADMIN_URL", "http://127.0.0.1:4445"),
+		HydraPublic:  getenv("HYDRA_PUBLIC_URL", "http://localhost:4444"),
+		HydraIssuer:  getenv("M2M_ISSUER", "http://localhost:4444"),
+		ClientTagKey: []byte("itest-only-client-tag-key-000000"),
 	}
 }
 
@@ -400,4 +410,52 @@ func (e Env) VerifyEmail(t *testing.T, email string) {
 		map[string]any{"method": "code", "code": m[1]}, &out); st != 200 {
 		t.Fatalf("verify: %d %+v", st, out.UI.Messages)
 	}
+}
+
+// JWKSURL is Hydra's public key set.
+func (e Env) JWKSURL() string {
+	return strings.TrimRight(e.HydraPublic, "/") + "/.well-known/jwks.json"
+}
+
+// ClientCredentialsToken asks Hydra's token endpoint for an access token
+// (client_secret_basic). audience "" omits the parameter. It returns the
+// HTTP status and the access token (empty unless 200).
+func (e Env) ClientCredentialsToken(t *testing.T, clientID, secret, scope, audience string) (int, string) {
+	t.Helper()
+	form := url.Values{"grant_type": {"client_credentials"}}
+	if scope != "" {
+		form.Set("scope", scope)
+	}
+	if audience != "" {
+		form.Set("audience", audience)
+	}
+	req, err := http.NewRequestWithContext(context.Background(), "POST", strings.TrimRight(e.HydraPublic, "/")+"/oauth2/token",
+		strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth(url.QueryEscape(clientID), url.QueryEscape(secret))
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		t.Fatalf("token endpoint: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var out struct {
+		AccessToken string `json:"access_token"`
+		TokenType   string `json:"token_type"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	if resp.StatusCode != http.StatusOK {
+		return resp.StatusCode, ""
+	}
+	if !strings.EqualFold(out.TokenType, "bearer") || out.AccessToken == "" {
+		t.Fatalf("token response: type %q", out.TokenType)
+	}
+	return resp.StatusCode, out.AccessToken
+}
+
+// DeleteHydraClient removes a Hydra client (cleanup; 404 is fine).
+func (e Env) DeleteHydraClient(t *testing.T, clientID string) {
+	JSON(t, nil, "DELETE", strings.TrimRight(e.HydraAdmin, "/")+"/admin/clients/"+url.PathEscape(clientID), nil, nil, nil)
 }

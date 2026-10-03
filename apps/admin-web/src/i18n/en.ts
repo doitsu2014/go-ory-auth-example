@@ -29,6 +29,7 @@ export const en = {
     customers: "Customers",
     admins: "Admins",
     audit: "Audit log",
+    serviceClients: "Service clients",
     settings: "Account security",
   },
   lang: {
@@ -142,6 +143,66 @@ export const en = {
     filterTargetId: "Target ID",
     filterActorId: "Actor ID",
   },
+  serviceClients: {
+    title: "Service clients",
+    intro:
+      "Machine clients call the identity-service M2M API with the OAuth 2.0 client credentials grant.",
+    name: "Name",
+    clientId: "Client ID",
+    owner: "Owner",
+    scopes: "Scopes",
+    created: "Created",
+    empty: "No service clients yet.",
+    create: "Create client",
+    createTitle: "Create a service client",
+    createBody: "The client secret is shown once, right after the client is created.",
+    nameHint: "3–64 characters: lowercase letters, digits and dashes.",
+    nameInvalid:
+      "Use lowercase letters, digits and dashes only, starting with a letter or a digit.",
+    ownerHint: "Email of the person or team responsible for this client.",
+    scopesRequired: "Select at least one scope.",
+    scopeDescriptions: {
+      customersRead: "Read customer accounts (no personal information).",
+      auditRead: "Read the machine audit feed.",
+    },
+    rotate: "Rotate secret",
+    rotateFor: "Rotate secret of {{name}}",
+    rotateConfirmTitle: "Rotate the secret of {{name}}?",
+    rotateConfirmBody:
+      "A new secret is generated. The current secret and every token issued with it stop working immediately; update the services that use it.",
+    delete: "Delete",
+    deleteFor: "Delete {{name}}",
+    deleteConfirmTitle: "Delete {{name}}?",
+    deleteConfirmBody:
+      "The client is removed and can no longer request tokens like the one below; tokens already issued stop working within 30 seconds. This cannot be undone.",
+    deleted: "Service client {{name}} deleted.",
+    secretTitle: {
+      created: "Client {{name}} created",
+      rotated: "New secret for {{name}}",
+    },
+    clientSecret: "Client secret",
+    copySecret: "Copy secret",
+    copied: "Secret copied to the clipboard.",
+    copyFailed: "Copy failed. Select the secret and copy it manually.",
+    secretWarning:
+      "Store the secret in your secret manager now. It won't be shown again; if it is lost, rotate the secret.",
+    secretMissing:
+      "The secret was not returned because this request was already processed. Rotate the secret to get a new one.",
+    secretDone: "I have stored the secret",
+    tokenExampleTitle: "Request an access token",
+    tokenExampleHint:
+      "{{placeholder}} stands for the client secret: read it from your secret manager, never from source code or logs.",
+    errors: {
+      unauthenticated: "Your session has ended. Please sign in again.",
+      forbidden: "You do not have permission to manage service clients.",
+      not_found: "This service client no longer exists. Refresh the list.",
+      conflict:
+        "This conflicts with an existing service client or a request still in progress. Refresh the list and try again.",
+      validation_failed: "Some fields are invalid. Check the name, owner and scopes.",
+      dependency_unavailable:
+        "The authorization server is unavailable, so nothing was changed. Please try again later.",
+    },
+  },
   pii: {
     title: "Personal information",
     maskedHint: "Values are masked. Revealing them is recorded in the audit log.",
@@ -214,6 +275,7 @@ export const en = {
     required: "This field is required.",
     email: "Enter a valid email address.",
     tooLong: "Too long (max {{max}} characters).",
+    tooShort: "Too short (min {{min}} characters).",
     uuid: "Enter a valid ID (UUID).",
   },
   /** Kratos generic error ids (error.id), used for flow errors and /error. */

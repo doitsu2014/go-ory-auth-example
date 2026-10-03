@@ -33,7 +33,7 @@ type prop struct {
 	props    map[string]prop
 }
 
-// strictBodies are the PII request bodies validated before the generated
+// strictBodies are the PII (and service client) request bodies validated before the generated
 // decoder runs: unknown properties and malformed values become field
 // errors (422) that name the field and a code, never the value.
 var strictBodies = map[string]prop{
@@ -55,6 +55,10 @@ var strictBodies = map[string]prop{
 	}},
 	"POST /admin/v1/customers/lookup": {kind: kindObject, props: map[string]prop{
 		"phone_number": {kind: kindString},
+	}},
+	// additionalProperties: false (M2M-FR-08).
+	"POST /admin/v1/service-clients": {kind: kindObject, props: map[string]prop{
+		"name": {kind: kindString}, "owner": {kind: kindString}, "scopes": {kind: kindStringArray},
 	}},
 }
 

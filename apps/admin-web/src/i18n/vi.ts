@@ -27,6 +27,7 @@ export const vi: Resources = {
     customers: "Khách hàng",
     admins: "Quản trị viên",
     audit: "Nhật ký kiểm toán",
+    serviceClients: "Ứng dụng dịch vụ",
     settings: "Bảo mật tài khoản",
   },
   lang: {
@@ -140,6 +141,65 @@ export const vi: Resources = {
     filterTargetId: "ID đối tượng",
     filterActorId: "ID người thực hiện",
   },
+  serviceClients: {
+    title: "Ứng dụng dịch vụ",
+    intro:
+      "Ứng dụng dịch vụ gọi API M2M của identity-service bằng luồng OAuth 2.0 client credentials.",
+    name: "Tên",
+    clientId: "Client ID",
+    owner: "Người phụ trách",
+    scopes: "Phạm vi (scope)",
+    created: "Ngày tạo",
+    empty: "Chưa có ứng dụng dịch vụ nào.",
+    create: "Tạo ứng dụng",
+    createTitle: "Tạo ứng dụng dịch vụ",
+    createBody: "Client secret chỉ hiển thị một lần, ngay sau khi tạo.",
+    nameHint: "3–64 ký tự: chữ thường, chữ số và dấu gạch ngang.",
+    nameInvalid: "Chỉ dùng chữ thường, chữ số và dấu gạch ngang, bắt đầu bằng chữ hoặc số.",
+    ownerHint: "Email của người hoặc nhóm chịu trách nhiệm cho ứng dụng này.",
+    scopesRequired: "Chọn ít nhất một phạm vi.",
+    scopeDescriptions: {
+      customersRead: "Đọc tài khoản khách hàng (không gồm thông tin cá nhân).",
+      auditRead: "Đọc nhật ký kiểm toán dành cho máy.",
+    },
+    rotate: "Đổi secret",
+    rotateFor: "Đổi secret của {{name}}",
+    rotateConfirmTitle: "Đổi secret của {{name}}?",
+    rotateConfirmBody:
+      "Một secret mới sẽ được tạo. Secret hiện tại và mọi token đã cấp bằng nó hết hiệu lực ngay lập tức; hãy cập nhật các dịch vụ đang dùng.",
+    delete: "Xóa",
+    deleteFor: "Xóa {{name}}",
+    deleteConfirmTitle: "Xóa {{name}}?",
+    deleteConfirmBody:
+      "Ứng dụng sẽ bị xóa và không thể lấy token như ví dụ bên dưới nữa; token đã cấp hết hiệu lực trong vòng 30 giây. Không thể hoàn tác.",
+    deleted: "Đã xóa ứng dụng dịch vụ {{name}}.",
+    secretTitle: {
+      created: "Đã tạo ứng dụng {{name}}",
+      rotated: "Secret mới của {{name}}",
+    },
+    clientSecret: "Client secret",
+    copySecret: "Sao chép secret",
+    copied: "Đã sao chép secret vào bộ nhớ tạm.",
+    copyFailed: "Sao chép thất bại. Hãy chọn secret và sao chép thủ công.",
+    secretWarning:
+      "Hãy lưu secret vào kho bí mật ngay bây giờ. Secret sẽ không được hiển thị lại; nếu bị mất, hãy đổi secret.",
+    secretMissing:
+      "Secret không được trả về vì yêu cầu này đã được xử lý trước đó. Hãy đổi secret để nhận secret mới.",
+    secretDone: "Tôi đã lưu secret",
+    tokenExampleTitle: "Lấy access token",
+    tokenExampleHint:
+      "{{placeholder}} là client secret: hãy đọc từ kho bí mật, không bao giờ từ mã nguồn hay log.",
+    errors: {
+      unauthenticated: "Phiên đăng nhập đã kết thúc. Vui lòng đăng nhập lại.",
+      forbidden: "Bạn không có quyền quản lý ứng dụng dịch vụ.",
+      not_found: "Ứng dụng dịch vụ này không còn tồn tại. Hãy tải lại danh sách.",
+      conflict:
+        "Xung đột với một ứng dụng dịch vụ hiện có hoặc một yêu cầu đang xử lý. Hãy tải lại danh sách rồi thử lại.",
+      validation_failed: "Một số trường không hợp lệ. Kiểm tra tên, người phụ trách và phạm vi.",
+      dependency_unavailable:
+        "Máy chủ ủy quyền không khả dụng nên không có thay đổi nào. Vui lòng thử lại sau.",
+    },
+  },
   pii: {
     title: "Thông tin cá nhân",
     maskedHint: "Các giá trị đã được che. Việc hiển thị sẽ được ghi vào nhật ký kiểm toán.",
@@ -213,6 +273,7 @@ export const vi: Resources = {
     required: "Trường này là bắt buộc.",
     email: "Nhập địa chỉ email hợp lệ.",
     tooLong: "Quá dài (tối đa {{max}} ký tự).",
+    tooShort: "Quá ngắn (tối thiểu {{min}} ký tự).",
     uuid: "Nhập ID hợp lệ (UUID).",
   },
   kratosError: {

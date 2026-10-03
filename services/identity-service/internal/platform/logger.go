@@ -19,6 +19,10 @@ var sensitiveKeys = map[string]struct{}{
 	// Customer PII and key material (intent 261003-encrypt-user-pii).
 	"phone": {}, "phone_number": {}, "date_of_birth": {}, "dob": {}, "address": {}, "national_id": {},
 	"plaintext": {}, "dek": {}, "x-vault-token": {}, "pii_local_kek": {}, "pii_local_bidx_key": {},
+	// OAuth2 / Hydra (intent 261003-add-ory-hydra).
+	"client_secret": {}, "access_token": {}, "refresh_token": {}, "id_token": {}, "bearer": {}, "jwt": {},
+	"registration_access_token": {}, "secrets_system": {}, "hydra_secrets_system": {},
+	"m2m_client_tag_key": {}, "integrity": {},
 }
 
 // IsSensitiveKey reports whether a log attribute key must be redacted.

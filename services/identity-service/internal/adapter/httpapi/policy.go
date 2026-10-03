@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/identity"
+	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/machine"
 )
 
 // Policy is the authorization declaration of one route (P4: deny by default).
@@ -22,12 +23,15 @@ type Policy struct {
 	// AllowAAL1 lets an admin with TOTP reach the route at AAL1
 	// (only /admin/v1/me, so the web can route to step-up).
 	AllowAAL1 bool
+	// Scope is the OAuth2 scope a machine-plane route requires. Required on
+	// PlaneMachine, forbidden elsewhere.
+	Scope machine.Scope
 }
 
 // RoutePolicies declares the policy of every public route, keyed by
 // "METHOD pattern". The server refuses to start if a registered route has no
-// entry, an admin route declares neither a permission nor Self, or an entry
-// has no route (see ValidatePolicies).
+// entry, an admin route declares neither a permission nor Self, a machine
+// route declares no scope, or an entry has no route (see ValidatePolicies).
 var RoutePolicies = map[string]Policy{
 	// Customer plane (bearer only). FR-09, FR-10.
 	"GET /v1/me":   {Plane: PlaneCustomer, Self: true},
@@ -53,6 +57,17 @@ var RoutePolicies = map[string]Policy{
 	"POST /admin/v1/customers/lookup":                    {Plane: PlaneAdmin, Permission: identity.PermViewCustomers},
 	"GET /admin/v1/customers/{id}/personal-info":         {Plane: PlaneAdmin, Permission: identity.PermViewCustomers},
 	"POST /admin/v1/customers/{id}/personal-info/reveal": {Plane: PlaneAdmin, Permission: identity.PermRevealCustomerPII},
+
+	// Service clients (M2M-FR-08..11).
+	"GET /admin/v1/service-clients":                            {Plane: PlaneAdmin, Permission: identity.PermManageServiceClients},
+	"POST /admin/v1/service-clients":                           {Plane: PlaneAdmin, Permission: identity.PermManageServiceClients},
+	"GET /admin/v1/service-clients/{client_id}":                {Plane: PlaneAdmin, Permission: identity.PermManageServiceClients},
+	"DELETE /admin/v1/service-clients/{client_id}":             {Plane: PlaneAdmin, Permission: identity.PermManageServiceClients},
+	"POST /admin/v1/service-clients/{client_id}/rotate-secret": {Plane: PlaneAdmin, Permission: identity.PermManageServiceClients},
+
+	// Machine plane (Hydra JWT only, scope per route). M2M-FR-04..06.
+	"GET /m2m/v1/customers/{id}": {Plane: PlaneMachine, Scope: machine.ScopeCustomersRead},
+	"GET /m2m/v1/audit-events":   {Plane: PlaneMachine, Scope: machine.ScopeAuditRead},
 }
 
 func routeKey(method, pattern string) string { return method + " " + pattern }
@@ -79,6 +94,8 @@ func ValidatePolicies(r chi.Routes, policies map[string]Policy) error {
 			wantPlane = PlaneAdmin
 		case strings.HasPrefix(route, "/v1/"):
 			wantPlane = PlaneCustomer
+		case strings.HasPrefix(route, "/m2m/v1/"):
+			wantPlane = PlaneMachine
 		}
 		if p.Plane != wantPlane || wantPlane == PlaneNone {
 			errs = append(errs, fmt.Errorf("route %q: policy plane does not match its prefix", k))
@@ -88,6 +105,18 @@ func ValidatePolicies(r chi.Routes, policies map[string]Policy) error {
 		}
 		if p.Permission != "" && p.Self {
 			errs = append(errs, fmt.Errorf("route %q declares both Self and a permission", k))
+		}
+		// §6 A13: machine routes are authorised by scope only; other planes
+		// never by scope.
+		if p.Plane == PlaneMachine {
+			if _, ok := machine.ParseScope(string(p.Scope)); !ok {
+				errs = append(errs, fmt.Errorf("machine route %q declares no valid scope", k))
+			}
+			if p.Permission != "" || p.Self || p.AllowAAL1 {
+				errs = append(errs, fmt.Errorf("machine route %q may declare only a scope", k))
+			}
+		} else if p.Scope != "" {
+			errs = append(errs, fmt.Errorf("route %q is not a machine route but declares a scope", k))
 		}
 		return nil
 	})

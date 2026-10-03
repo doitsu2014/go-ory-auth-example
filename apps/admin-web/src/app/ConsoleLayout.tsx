@@ -12,6 +12,11 @@ const NAV: { to: string; label: string; permission: Permission }[] = [
   { to: "/customers", label: "nav.customers", permission: "view_customers" },
   { to: "/admins", label: "nav.admins", permission: "manage_admins" },
   { to: "/audit", label: "nav.audit", permission: "view_audit" },
+  {
+    to: "/service-clients",
+    label: "nav.serviceClients",
+    permission: "manage_service_clients",
+  },
 ];
 
 /** Layout of the protected console (rendered below the RequireAdmin loader). */

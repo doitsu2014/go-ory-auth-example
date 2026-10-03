@@ -25,6 +25,9 @@ type Server struct {
 	Audit     *app.AuditService
 	// PersonalInfo serves /v1/me/personal-info and the admin PII routes.
 	PersonalInfo *app.PersonalInfoService
+	// Machine serves /m2m/v1; ServiceClients the admin service-client routes.
+	Machine        *app.MachineService
+	ServiceClients *app.ServiceClientService
 }
 
 var _ gen.StrictServerInterface = (*Server)(nil)

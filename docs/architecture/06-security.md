@@ -54,6 +54,8 @@ identity id in a path, and headers like `X-User-Id` (stripped at the ingress).
 | T12 | Secret leakage | repo, logs | gitleaks in CI, secrets via env/secret manager, log redaction of `Authorization`, `Cookie`, `X-Session-Token`, `password`, `code` |
 | T13 | Repudiation of admin actions | Admin plane | Append-only `audit_event` with actor, request id, IP |
 | T14 | DoS via expensive hashing | Kratos login | Rate limits, request size limits, autoscaling Kratos |
+| T18 | Stolen or over-privileged machine credentials | `/m2m/v1/*` | 5 min JWTs, per-route scopes, PII-free DTOs, rotate kills issued tokens (`tokens_valid_after`), delete ≤ 30 s, per-client rate limit, `m2m_access` log |
+| T19 | Unauthenticated Hydra admin API reached by another workload | Hydra `:4445` | Dedicated `hydra` network (compose) / NetworkPolicy (prod), never through ingress, dynamic client registration disabled |
 | T16 | PII disclosure via DB dump, backup or SQL access | identity DB | Envelope encryption (08-pii-protection), KEK non-exportable in OpenBao, least-privilege token |
 | T17 | Insider browsing / enumeration of customer PII | Admin plane | Masked by default, `reveal_customer_pii` + reason code, per-actor quotas, audit of every reveal and lookup |
 | T15 | Supply chain | deps, images | Pinned versions, `govulncheck`, `pnpm audit`, `dart pub outdated`, image scanning, Dependabot/Renovate with review |
@@ -132,4 +134,8 @@ identity id in a path, and headers like `X-User-Id` (stripped at the ingress).
 | Crypto-shredded PII stays recoverable from backups/PITR until the KEK version that wrapped its DEK is retired | KEK rotated at least once per backup-retention period, then `min_decryption_version` + `trim`. Erasure ledger re-applied after any restore (08 §8.5). Owner: identity-service maintainers | Backup retention changes, or a managed KMS with per-key destruction is adopted |
 | After an erase, other replicas can keep the erased customer's DEK in memory for ≤ 5 min | The ciphertext is already deleted, so there is nothing for the DEK to decrypt | Shared cache / pub-sub eviction |
 | Local OpenBao keeps its unseal key and root token on a volume | Local only. Production uses auto-unseal and Kubernetes auth | — |
+| A deleted or rotated service client is still accepted for ≤ 30 s by replicas that cached its status | Same bound as the session cache, and tokens live 5 min at most. Owner: identity-service maintainers | Partners need instant revocation → introspection or a shared revocation cache |
+| Hydra `/oauth2/revoke` does not stop a JWT at identity-service (offline verification) | Rotate or delete revokes in ≤ 30 s, and tokens live 5 min at most. Runbook: rotate, don't revoke. Owner: identity-service maintainers | Instant revocation needed → introspection |
+| The Hydra admin API has no authentication. In compose it is reachable from the `hydra`/`hydra-db` networks and host 127.0.0.1 | Clients created outside identity-service fail the HMAC integrity tag. Production uses a NetworkPolicy plus an authenticating proxy | Hydra gains native admin auth |
+| Service clients authenticate with `client_secret_basic` | Internal jobs only in v1. Secrets are 256-bit, hashed by Hydra and shown once | Before external partners onboard → `private_key_jwt` |
 | Parent-domain session cookie is visible to all hosts under the platform apex | Apex is dedicated to admin/auth/api only; DNS monitored | Apex can't be dedicated → host-only cookie layout (05-deployment §5.2) |

@@ -2,6 +2,7 @@ import { type ReactNode, useEffect, useId, useRef } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "./Button";
+import { cx } from "./cx";
 
 export interface ConfirmDialogProps {
   open: boolean;
@@ -15,6 +16,12 @@ export interface ConfirmDialogProps {
   onConfirm: () => void;
   onCancel: () => void;
   formId?: string;
+  /** Omit the Cancel button (Escape still calls onCancel). */
+  hideCancel?: boolean;
+  /** Disable the confirm button (e.g. until an acknowledgement is ticked). */
+  confirmDisabled?: boolean;
+  /** Wider panel, for code samples. */
+  wide?: boolean;
 }
 
 const FOCUSABLE =
@@ -35,6 +42,9 @@ export function ConfirmDialog({
   busy,
   onConfirm,
   onCancel,
+  hideCancel,
+  confirmDisabled,
+  wide,
 }: ConfirmDialogProps) {
   const { t } = useTranslation();
   const titleId = useId();
@@ -89,7 +99,10 @@ export function ConfirmDialog({
         aria-labelledby={titleId}
         aria-describedby={description ? descId : undefined}
         tabIndex={-1}
-        className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl"
+        className={cx(
+          "w-full rounded-lg bg-white p-6 shadow-xl",
+          wide ? "max-h-full max-w-2xl overflow-y-auto" : "max-w-md",
+        )}
       >
         <form
           noValidate
@@ -109,10 +122,16 @@ export function ConfirmDialog({
           ) : null}
           {children}
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="secondary" onClick={onCancel} disabled={busy}>
-              {t("common.cancel")}
-            </Button>
-            <Button type="submit" variant={danger ? "danger" : "primary"} disabled={busy}>
+            {hideCancel ? null : (
+              <Button variant="secondary" onClick={onCancel} disabled={busy}>
+                {t("common.cancel")}
+              </Button>
+            )}
+            <Button
+              type="submit"
+              variant={danger ? "danger" : "primary"}
+              disabled={busy || confirmDisabled}
+            >
               {confirmLabel}
             </Button>
           </div>

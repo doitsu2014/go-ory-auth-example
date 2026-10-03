@@ -22,6 +22,12 @@ var (
 	// authentication (tampering, row/column swap, wrong key). It maps to
 	// 500 and never carries values.
 	ErrDataIntegrity = errors.New("data integrity check failed")
+	// ErrInvalidToken is a machine-plane bearer token that failed
+	// verification (401 invalid_token). It never carries token contents.
+	ErrInvalidToken = errors.New("invalid token")
+	// ErrInsufficientScope is a valid machine token without the route's
+	// scope (403 insufficient_scope).
+	ErrInsufficientScope = errors.New("insufficient scope")
 )
 
 // FieldError is one invalid input field.

@@ -102,6 +102,9 @@ func accessLog(log *slog.Logger, m *Metrics, server string) func(http.Handler) h
 				if st.identityID != "" {
 					attrs = append(attrs, "identity_id", st.identityID)
 				}
+				if st.machine != nil {
+					attrs = append(attrs, "client_id", st.machine.ClientID)
+				}
 				if st.problemCode != "" {
 					attrs = append(attrs, "problem_code", st.problemCode)
 				}
@@ -145,10 +148,15 @@ func securityHeaders(next http.Handler) http.Handler {
 }
 
 // cors allows the configured origins with credentials. Preflights from
-// unknown origins get no CORS headers (the browser blocks them).
+// unknown origins get no CORS headers (the browser blocks them). The machine
+// plane has no CORS at all (§6 A13): it is not for browsers.
 func cors(allowed []string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if planeOf(r) == PlaneMachine {
+				next.ServeHTTP(w, r)
+				return
+			}
 			origin := r.Header.Get("Origin")
 			h := w.Header()
 			if origin != "" {
@@ -186,6 +194,9 @@ func cors(allowed []string) func(http.Handler) http.Handler {
 //  5. admin gate: 12 h cap, AAL2, MFA enrolment deadline              → 401 / 403
 //  6. CSRF guard for cookie-authenticated mutations                   → 403
 //  7. Keto permission                                                 → 403 / 503
+//
+// /m2m/v1 requests are handed to the MachineGuard (never to Kratos); without
+// one the machine plane answers 503.
 type Guard struct {
 	Verifier       app.SessionVerifier
 	Gate           *app.AdminGate
@@ -196,6 +207,8 @@ type Guard struct {
 	Errors         errorWriter
 	// Router is used to match the route pattern before handlers run.
 	Router chi.Routes
+	// Machine guards /m2m/v1 (nil = machine access not configured).
+	Machine *MachineGuard
 }
 
 // Middleware returns the guard as middleware.
@@ -204,6 +217,14 @@ func (g *Guard) Middleware(next http.Handler) http.Handler {
 		plane := planeOf(r)
 		if plane == PlaneNone {
 			next.ServeHTTP(w, r)
+			return
+		}
+		if plane == PlaneMachine {
+			if g.Machine == nil {
+				writeProblem(w, r, CodeDependencyUnavailable, "", nil)
+				return
+			}
+			g.Machine.serve(w, r, next)
 			return
 		}
 		cred, ok := credentialFor(plane, r)
@@ -307,6 +328,10 @@ func credentialFor(plane Plane, r *http.Request) (app.Credential, bool) {
 		scheme, tok, found := strings.Cut(authz, " ")
 		tok = strings.TrimSpace(tok)
 		if !found || !strings.EqualFold(scheme, "Bearer") || tok == "" {
+			return app.Credential{}, false
+		}
+		if looksLikeJWT(tok) {
+			// A machine (Hydra) JWT: never forwarded to Kratos (§6 A13).
 			return app.Credential{}, false
 		}
 		return app.Credential{Kind: app.CredentialToken, Value: tok}, true

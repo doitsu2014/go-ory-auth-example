@@ -12,6 +12,9 @@ One command: `make up` (wraps `docker compose -f deploy/compose/docker-compose.y
 | `keto-migrate` | `oryd/keto:<pinned>` | — | `migrate up --yes` |
 | `keto` | `oryd/keto:<pinned>` | 4466 read, 4467 write | loads `namespaces.keto.ts` |
 | `mailpit` | `axllent/mailpit` | 8025 UI, 1025 SMTP | catches verification / recovery mail |
+| `hydra-db` | `postgres:16-alpine` | — | one-shot: idempotently creates role and DB `hydra` |
+| `hydra-migrate` | `oryd/hydra:v26.2.0` | — | `migrate sql up -e --yes` |
+| `hydra` | `oryd/hydra:v26.2.0` | 4444 public, 127.0.0.1:4445 admin | client_credentials only. Networks `hydra` (identity-service only) and `hydra-db` |
 | `openbao` | `openbao/openbao:2.4.1` | 127.0.0.1:8200 | Transit KEK and blind-index key for PII; `file` storage volume |
 | `openbao-init` | `openbao/openbao:2.4.1` | — | one-shot: init, unseal, keys, policies, app token (re-runs on every `up`) |
 | `identity-service` | built from `services/identity-service` | 8080 public, 8081 webhooks, 9090 ops | `migrate up` then `serve` |

@@ -33,6 +33,11 @@ Base URLs: `https://api.example.com` (prod), `http://localhost:8080` (local).
 | `POST /admin/v1/admins` | admin AAL2 + `Idempotency-Key` | `manage_admins` | FR-07, FR-12 |
 | `PUT /admin/v1/admins/{id}/role` | admin AAL2 | `manage_admins` | FR-12 |
 | `GET /admin/v1/audit-events` | admin AAL2 | `view_audit` | FR-12 |
+| `GET /m2m/v1/customers/{id}` | Hydra JWT | scope `customers:read` | M2M-FR-05 |
+| `GET /m2m/v1/audit-events` | Hydra JWT | scope `audit:read` | M2M-FR-06 |
+| `GET/POST /admin/v1/service-clients` | admin AAL2 (+ `Idempotency-Key` on POST) | `manage_service_clients` | M2M-FR-08, 09 |
+| `GET/DELETE /admin/v1/service-clients/{client_id}` | admin AAL2 | `manage_service_clients` | M2M-FR-09, 11 |
+| `POST /admin/v1/service-clients/{client_id}/rotate-secret` | admin AAL2 | `manage_service_clients` | M2M-FR-10 |
 | `GET /v1/me/personal-info` | customer | self | PII-FR-01 |
 | `PUT /v1/me/personal-info` | customer (verified email) | self | PII-FR-02, 03 |
 | `DELETE /v1/me/personal-info` | customer | self | PII-FR-04 |
@@ -42,7 +47,7 @@ Base URLs: `https://api.example.com` (prod), `http://localhost:8080` (local).
 | `POST /internal/hooks/kratos/after-registration` | API key | — | FR-09 |
 | `GET /healthz`, `GET /readyz`, `GET /metrics` | none (ops port `:9090`, private) | — | NFR-07 |
 
-Credential per plane: `/v1/*` accepts only `Authorization: Bearer`.
+Credential per plane: `/m2m/v1/*` accepts only Hydra JWTs (see [09-machine-access](../architecture/09-machine-access.md)). `/v1/*` accepts only `Authorization: Bearer`.
 `/admin/v1/*` accepts only the Kratos session cookie. Anything else gets `401`.
 Every `/admin/v1/customers/{id}/*` endpoint returns `404` when the target isn't a
 `customer` identity.

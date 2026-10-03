@@ -522,6 +522,9 @@ func (r auditRepo) List(_ context.Context, f audit.Filter) ([]audit.Event, error
 		if f.ActorID != nil && e.ActorID != *f.ActorID {
 			continue
 		}
+		if !f.Matches(e.Action) {
+			continue
+		}
 		if f.After != nil && e.ID >= f.After.ID {
 			continue
 		}

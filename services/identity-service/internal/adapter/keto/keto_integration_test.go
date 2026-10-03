@@ -43,7 +43,7 @@ func TestFR06_KetoRolesAndPermissions(t *testing.T) {
 		{identity.RoleAdmin, map[identity.Permission]bool{identity.PermViewCustomers: true, identity.PermManageCustomers: true, identity.PermViewAudit: true,
 			identity.PermRevealCustomerPII: true}},
 		{identity.RoleSuperAdmin, map[identity.Permission]bool{identity.PermViewCustomers: true, identity.PermManageCustomers: true, identity.PermViewAudit: true,
-			identity.PermManageAdmins: true, identity.PermRevealCustomerPII: true}},
+			identity.PermManageAdmins: true, identity.PermRevealCustomerPII: true, identity.PermManageServiceClients: true}},
 	}
 	for _, tt := range tests {
 		if err := c.SetRole(ctx, id, tt.role); err != nil {

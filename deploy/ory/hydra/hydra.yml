@@ -1,0 +1,47 @@
+# Ory Hydra — OAuth2 authorisation server for machine-to-machine access only
+# (client_credentials, ADR-0012). No login/consent app: people keep using
+# Kratos sessions (ADR-0002). Secrets and DSN come from env (SECRETS_SYSTEM, DSN).
+serve:
+  public:
+    port: 4444
+  admin:
+    port: 4445
+  cookies:
+    same_site_mode: Lax
+
+urls:
+  self:
+    issuer: http://localhost:4444
+  # Not used: authorization-code/OIDC flows are disabled by policy (only
+  # identity-service creates clients, always client_credentials-only).
+  login: http://localhost:5173/oauth2-unsupported
+  consent: http://localhost:5173/oauth2-unsupported
+  error: http://localhost:5173/oauth2-unsupported
+
+strategies:
+  access_token: jwt
+  jwt:
+    scope_claim: list
+
+ttl:
+  access_token: 5m
+
+oauth2:
+  expose_internal_errors: false
+  client_credentials:
+    default_grant_allowed_scope: false
+  # Client secrets are 256-bit random values, so a moderate cost is enough and
+  # limits CPU exhaustion through the token endpoint.
+  hashers:
+    algorithm: bcrypt
+    bcrypt:
+      cost: 10
+
+oidc:
+  dynamic_client_registration:
+    enabled: false
+
+log:
+  level: info
+  format: json
+  leak_sensitive_values: false

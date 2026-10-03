@@ -55,6 +55,24 @@ func (e IdentityState) Valid() bool {
 	}
 }
 
+// Defines values for MachineScope.
+const (
+	AuditRead     MachineScope = "audit:read"
+	CustomersRead MachineScope = "customers:read"
+)
+
+// Valid indicates whether the value is a known member of the MachineScope enum.
+func (e MachineScope) Valid() bool {
+	switch e {
+	case AuditRead:
+		return true
+	case CustomersRead:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for MaskedPersonalInfoNationalIdType.
 const (
 	MaskedPersonalInfoNationalIdTypeCccd     MaskedPersonalInfoNationalIdType = "cccd"
@@ -99,11 +117,12 @@ func (e NationalIdType) Valid() bool {
 
 // Defines values for Permission.
 const (
-	ManageAdmins      Permission = "manage_admins"
-	ManageCustomers   Permission = "manage_customers"
-	RevealCustomerPii Permission = "reveal_customer_pii"
-	ViewAudit         Permission = "view_audit"
-	ViewCustomers     Permission = "view_customers"
+	ManageAdmins         Permission = "manage_admins"
+	ManageCustomers      Permission = "manage_customers"
+	ManageServiceClients Permission = "manage_service_clients"
+	RevealCustomerPii    Permission = "reveal_customer_pii"
+	ViewAudit            Permission = "view_audit"
+	ViewCustomers        Permission = "view_customers"
 )
 
 // Valid indicates whether the value is a known member of the Permission enum.
@@ -112,6 +131,8 @@ func (e Permission) Valid() bool {
 	case ManageAdmins:
 		return true
 	case ManageCustomers:
+		return true
+	case ManageServiceClients:
 		return true
 	case RevealCustomerPii:
 		return true
@@ -262,6 +283,16 @@ type ChangeRoleRequest struct {
 	Role Role `json:"role"`
 }
 
+// CreateServiceClientRequest defines model for CreateServiceClientRequest.
+type CreateServiceClientRequest struct {
+	// Name Example: billing-sync
+	Name string `json:"name"`
+
+	// Owner Contact responsible for the client
+	Owner  openapi_types.Email `json:"owner"`
+	Scopes []MachineScope      `json:"scopes"`
+}
+
 // Customer defines model for Customer.
 type Customer struct {
 	CreatedAt     time.Time                 `json:"created_at"`
@@ -327,6 +358,41 @@ type InvitedAdmin struct {
 	InvitationExpiresAt time.Time           `json:"invitation_expires_at"`
 	Role                Role                `json:"role"`
 }
+
+// MachineAuditEvent defines model for MachineAuditEvent.
+type MachineAuditEvent struct {
+	Action  string             `json:"action"`
+	ActorId openapi_types.UUID `json:"actor_id"`
+
+	// Details Allowlisted keys only (role, previous_role, scopes, name).
+	Details *struct {
+		Name         *string   `json:"name,omitempty"`
+		PreviousRole *string   `json:"previous_role,omitempty"`
+		Role         *string   `json:"role,omitempty"`
+		Scopes       *[]string `json:"scopes,omitempty"`
+	} `json:"details,omitempty"`
+	Id         int64     `json:"id"`
+	OccurredAt time.Time `json:"occurred_at"`
+	TargetId   string    `json:"target_id"`
+	TargetType string    `json:"target_type"`
+}
+
+// MachineAuditEventPage defines model for MachineAuditEventPage.
+type MachineAuditEventPage struct {
+	Items         []MachineAuditEvent       `json:"items"`
+	NextPageToken nullable.Nullable[string] `json:"next_page_token,omitempty"`
+}
+
+// MachineCustomer defines model for MachineCustomer.
+type MachineCustomer struct {
+	CreatedAt     time.Time          `json:"created_at"`
+	EmailVerified bool               `json:"email_verified"`
+	Id            openapi_types.UUID `json:"id"`
+	State         IdentityState      `json:"state"`
+}
+
+// MachineScope defines model for MachineScope.
+type MachineScope string
 
 // MaskedPersonalInfo defines model for MaskedPersonalInfo.
 type MaskedPersonalInfo struct {
@@ -409,7 +475,8 @@ type PersonalInfo struct {
 type Problem struct {
 	// Code Stable machine code. Known values: unauthenticated, forbidden, not_admin,
 	// aal2_required, mfa_enrollment_required, email_not_verified, not_found,
-	// conflict, validation_failed, rate_limited, dependency_unavailable, internal.
+	// conflict, validation_failed, rate_limited, dependency_unavailable, internal,
+	// invalid_request, invalid_token, insufficient_scope (machine plane; also sent in `WWW-Authenticate`).
 	// Clients must tolerate unknown values.
 	Code      string        `json:"code"`
 	Detail    *string       `json:"detail,omitempty"`
@@ -446,12 +513,43 @@ type RevealRequestReasonCode string
 // Role defines model for Role.
 type Role string
 
+// ServiceClient defines model for ServiceClient.
+type ServiceClient struct {
+	ClientId  string                                `json:"client_id"`
+	CreatedAt time.Time                             `json:"created_at"`
+	CreatedBy nullable.Nullable[openapi_types.UUID] `json:"created_by,omitempty"`
+	Name      string                                `json:"name"`
+	Owner     openapi_types.Email                   `json:"owner"`
+	Scopes    []MachineScope                        `json:"scopes"`
+}
+
+// ServiceClientList defines model for ServiceClientList.
+type ServiceClientList struct {
+	Items []ServiceClient `json:"items"`
+}
+
+// ServiceClientWithSecret defines model for ServiceClientWithSecret.
+type ServiceClientWithSecret struct {
+	ClientId string `json:"client_id"`
+
+	// ClientSecret Present only on create and rotate. Never stored by identity-service.
+	ClientSecret *string                               `json:"client_secret,omitempty"`
+	CreatedAt    time.Time                             `json:"created_at"`
+	CreatedBy    nullable.Nullable[openapi_types.UUID] `json:"created_by,omitempty"`
+	Name         string                                `json:"name"`
+	Owner        openapi_types.Email                   `json:"owner"`
+	Scopes       []MachineScope                        `json:"scopes"`
+}
+
 // UpdateMeRequest defines model for UpdateMeRequest.
 type UpdateMeRequest struct {
 	AvatarUrl   nullable.Nullable[string] `json:"avatar_url,omitempty"`
 	DisplayName nullable.Nullable[string] `json:"display_name,omitempty"`
 	Locale      *string                   `json:"locale,omitempty"`
 }
+
+// ClientId defines model for ClientId.
+type ClientId = string
 
 // IdentityId defines model for IdentityId.
 type IdentityId = openapi_types.UUID
@@ -490,6 +588,20 @@ type ListCustomersParams struct {
 	PageToken *PageToken           `form:"page_token,omitempty" json:"page_token,omitempty"`
 }
 
+// CreateServiceClientParams defines parameters for CreateServiceClient.
+type CreateServiceClientParams struct {
+	IdempotencyKey openapi_types.UUID `json:"Idempotency-Key"`
+}
+
+// ListMachineAuditEventsParams defines parameters for ListMachineAuditEvents.
+type ListMachineAuditEventsParams struct {
+	TargetType *string             `form:"target_type,omitempty" json:"target_type,omitempty"`
+	TargetId   *string             `form:"target_id,omitempty" json:"target_id,omitempty"`
+	ActorId    *openapi_types.UUID `form:"actor_id,omitempty" json:"actor_id,omitempty"`
+	PageSize   *PageSize           `form:"page_size,omitempty" json:"page_size,omitempty"`
+	PageToken  *PageToken          `form:"page_token,omitempty" json:"page_token,omitempty"`
+}
+
 // InviteAdminJSONRequestBody defines body for InviteAdmin for application/json ContentType.
 type InviteAdminJSONRequestBody = InviteAdminRequest
 
@@ -507,6 +619,9 @@ type EnableCustomerJSONRequestBody = ReasonRequest
 
 // RevealCustomerPersonalInfoJSONRequestBody defines body for RevealCustomerPersonalInfo for application/json ContentType.
 type RevealCustomerPersonalInfoJSONRequestBody = RevealRequest
+
+// CreateServiceClientJSONRequestBody defines body for CreateServiceClient for application/json ContentType.
+type CreateServiceClientJSONRequestBody = CreateServiceClientRequest
 
 // UpdateMeJSONRequestBody defines body for UpdateMe for application/json ContentType.
 type UpdateMeJSONRequestBody = UpdateMeRequest
@@ -555,6 +670,27 @@ type ServerInterface interface {
 	// GetAdminMe Current admin session; the only admin endpoint reachable at AAL1
 	// (GET /admin/v1/me)
 	GetAdminMe(w http.ResponseWriter, r *http.Request)
+	// ListServiceClients List machine clients managed by identity-service (permission manage_service_clients)
+	// (GET /admin/v1/service-clients)
+	ListServiceClients(w http.ResponseWriter, r *http.Request)
+	// CreateServiceClient Register a client_credentials client (permission manage_service_clients; secret returned once)
+	// (POST /admin/v1/service-clients)
+	CreateServiceClient(w http.ResponseWriter, r *http.Request, params CreateServiceClientParams)
+	// DeleteServiceClient Delete a machine client; its tokens stop working within 30 s (permission manage_service_clients)
+	// (DELETE /admin/v1/service-clients/{client_id})
+	DeleteServiceClient(w http.ResponseWriter, r *http.Request, clientId ClientId)
+	// GetServiceClient Get one machine client (permission manage_service_clients)
+	// (GET /admin/v1/service-clients/{client_id})
+	GetServiceClient(w http.ResponseWriter, r *http.Request, clientId ClientId)
+	// RotateServiceClientSecret Replace the client secret; the old one stops working immediately (permission manage_service_clients)
+	// (POST /admin/v1/service-clients/{client_id}/rotate-secret)
+	RotateServiceClientSecret(w http.ResponseWriter, r *http.Request, clientId ClientId)
+	// ListMachineAuditEvents List audit events, newest first (scope audit:read)
+	// (GET /m2m/v1/audit-events)
+	ListMachineAuditEvents(w http.ResponseWriter, r *http.Request, params ListMachineAuditEventsParams)
+	// GetMachineCustomer Customer status for service clients (scope customers:read); no personal data
+	// (GET /m2m/v1/customers/{id})
+	GetMachineCustomer(w http.ResponseWriter, r *http.Request, id IdentityId)
 	// GetMe Current customer profile
 	// (GET /v1/me)
 	GetMe(w http.ResponseWriter, r *http.Request)
@@ -651,6 +787,48 @@ func (_ Unimplemented) RevokeCustomerSessions(w http.ResponseWriter, r *http.Req
 // GetAdminMe Current admin session; the only admin endpoint reachable at AAL1
 // (GET /admin/v1/me)
 func (_ Unimplemented) GetAdminMe(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListServiceClients List machine clients managed by identity-service (permission manage_service_clients)
+// (GET /admin/v1/service-clients)
+func (_ Unimplemented) ListServiceClients(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CreateServiceClient Register a client_credentials client (permission manage_service_clients; secret returned once)
+// (POST /admin/v1/service-clients)
+func (_ Unimplemented) CreateServiceClient(w http.ResponseWriter, r *http.Request, params CreateServiceClientParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteServiceClient Delete a machine client; its tokens stop working within 30 s (permission manage_service_clients)
+// (DELETE /admin/v1/service-clients/{client_id})
+func (_ Unimplemented) DeleteServiceClient(w http.ResponseWriter, r *http.Request, clientId ClientId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetServiceClient Get one machine client (permission manage_service_clients)
+// (GET /admin/v1/service-clients/{client_id})
+func (_ Unimplemented) GetServiceClient(w http.ResponseWriter, r *http.Request, clientId ClientId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// RotateServiceClientSecret Replace the client secret; the old one stops working immediately (permission manage_service_clients)
+// (POST /admin/v1/service-clients/{client_id}/rotate-secret)
+func (_ Unimplemented) RotateServiceClientSecret(w http.ResponseWriter, r *http.Request, clientId ClientId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListMachineAuditEvents List audit events, newest first (scope audit:read)
+// (GET /m2m/v1/audit-events)
+func (_ Unimplemented) ListMachineAuditEvents(w http.ResponseWriter, r *http.Request, params ListMachineAuditEventsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetMachineCustomer Customer status for service clients (scope customers:read); no personal data
+// (GET /m2m/v1/customers/{id})
+func (_ Unimplemented) GetMachineCustomer(w http.ResponseWriter, r *http.Request, id IdentityId) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1151,6 +1329,254 @@ func (siw *ServerInterfaceWrapper) GetAdminMe(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
+// ListServiceClients operation middleware
+func (siw *ServerInterfaceWrapper) ListServiceClients(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListServiceClients(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateServiceClient operation middleware
+func (siw *ServerInterfaceWrapper) CreateServiceClient(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateServiceClientParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey openapi_types.UUID
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: "uuid"})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("Header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateServiceClient(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteServiceClient operation middleware
+func (siw *ServerInterfaceWrapper) DeleteServiceClient(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "client_id" -------------
+	var clientId ClientId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "client_id", chi.URLParam(r, "client_id"), &clientId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "client_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteServiceClient(w, r, clientId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetServiceClient operation middleware
+func (siw *ServerInterfaceWrapper) GetServiceClient(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "client_id" -------------
+	var clientId ClientId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "client_id", chi.URLParam(r, "client_id"), &clientId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "client_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetServiceClient(w, r, clientId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RotateServiceClientSecret operation middleware
+func (siw *ServerInterfaceWrapper) RotateServiceClientSecret(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "client_id" -------------
+	var clientId ClientId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "client_id", chi.URLParam(r, "client_id"), &clientId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "client_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RotateServiceClientSecret(w, r, clientId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListMachineAuditEvents operation middleware
+func (siw *ServerInterfaceWrapper) ListMachineAuditEvents(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListMachineAuditEventsParams
+
+	// ------------- Optional query parameter "target_type" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "target_type", r.URL.Query(), &params.TargetType, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "target_type"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "target_type", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "target_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "target_id", r.URL.Query(), &params.TargetId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "target_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "target_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "actor_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "actor_id", r.URL.Query(), &params.ActorId, runtime.BindQueryParameterOptions{Type: "string", Format: "uuid"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "actor_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "actor_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "page_size" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "page_size", r.URL.Query(), &params.PageSize, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "page_size"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "page_size", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "page_token" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "page_token", r.URL.Query(), &params.PageToken, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "page_token"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "page_token", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListMachineAuditEvents(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetMachineCustomer operation middleware
+func (siw *ServerInterfaceWrapper) GetMachineCustomer(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id IdentityId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMachineCustomer(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetMe operation middleware
 func (siw *ServerInterfaceWrapper) GetMe(w http.ResponseWriter, r *http.Request) {
 
@@ -1387,6 +1813,27 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/admin/v1/audit-events", wrapper.ListAuditEvents)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/m2m/v1/customers/{id}", wrapper.GetMachineCustomer)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/m2m/v1/audit-events", wrapper.ListMachineAuditEvents)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/admin/v1/service-clients", wrapper.ListServiceClients)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/admin/v1/service-clients", wrapper.CreateServiceClient)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/admin/v1/service-clients/{client_id}", wrapper.DeleteServiceClient)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/admin/v1/service-clients/{client_id}", wrapper.GetServiceClient)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/admin/v1/service-clients/{client_id}/rotate-secret", wrapper.RotateServiceClientSecret)
 	})
 
 	return r
@@ -2320,6 +2767,630 @@ func (response GetAdminMe403ApplicationProblemPlusJSONResponse) VisitGetAdminMeR
 	return err
 }
 
+type ListServiceClientsRequestObject struct {
+}
+
+type ListServiceClientsResponseObject interface {
+	VisitListServiceClientsResponse(w http.ResponseWriter) error
+}
+
+type ListServiceClients200JSONResponse ServiceClientList
+
+func (response ListServiceClients200JSONResponse) VisitListServiceClientsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListServiceClients401ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response ListServiceClients401ApplicationProblemPlusJSONResponse) VisitListServiceClientsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListServiceClients403ApplicationProblemPlusJSONResponse Problem
+
+func (response ListServiceClients403ApplicationProblemPlusJSONResponse) VisitListServiceClientsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListServiceClients503ApplicationProblemPlusJSONResponse Problem
+
+func (response ListServiceClients503ApplicationProblemPlusJSONResponse) VisitListServiceClientsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateServiceClientRequestObject struct {
+	Params CreateServiceClientParams
+	Body   *CreateServiceClientJSONRequestBody
+}
+
+type CreateServiceClientResponseObject interface {
+	VisitCreateServiceClientResponse(w http.ResponseWriter) error
+}
+
+type CreateServiceClient201JSONResponse ServiceClientWithSecret
+
+func (response CreateServiceClient201JSONResponse) VisitCreateServiceClientResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateServiceClient401ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response CreateServiceClient401ApplicationProblemPlusJSONResponse) VisitCreateServiceClientResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateServiceClient403ApplicationProblemPlusJSONResponse Problem
+
+func (response CreateServiceClient403ApplicationProblemPlusJSONResponse) VisitCreateServiceClientResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateServiceClient409ApplicationProblemPlusJSONResponse Problem
+
+func (response CreateServiceClient409ApplicationProblemPlusJSONResponse) VisitCreateServiceClientResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateServiceClient422ApplicationProblemPlusJSONResponse Problem
+
+func (response CreateServiceClient422ApplicationProblemPlusJSONResponse) VisitCreateServiceClientResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateServiceClient503ApplicationProblemPlusJSONResponse Problem
+
+func (response CreateServiceClient503ApplicationProblemPlusJSONResponse) VisitCreateServiceClientResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteServiceClientRequestObject struct {
+	ClientId ClientId `json:"client_id"`
+}
+
+type DeleteServiceClientResponseObject interface {
+	VisitDeleteServiceClientResponse(w http.ResponseWriter) error
+}
+
+type DeleteServiceClient204Response struct {
+}
+
+func (response DeleteServiceClient204Response) VisitDeleteServiceClientResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteServiceClient401ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response DeleteServiceClient401ApplicationProblemPlusJSONResponse) VisitDeleteServiceClientResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteServiceClient403ApplicationProblemPlusJSONResponse Problem
+
+func (response DeleteServiceClient403ApplicationProblemPlusJSONResponse) VisitDeleteServiceClientResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteServiceClient404ApplicationProblemPlusJSONResponse Problem
+
+func (response DeleteServiceClient404ApplicationProblemPlusJSONResponse) VisitDeleteServiceClientResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteServiceClient503ApplicationProblemPlusJSONResponse Problem
+
+func (response DeleteServiceClient503ApplicationProblemPlusJSONResponse) VisitDeleteServiceClientResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetServiceClientRequestObject struct {
+	ClientId ClientId `json:"client_id"`
+}
+
+type GetServiceClientResponseObject interface {
+	VisitGetServiceClientResponse(w http.ResponseWriter) error
+}
+
+type GetServiceClient200JSONResponse ServiceClient
+
+func (response GetServiceClient200JSONResponse) VisitGetServiceClientResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetServiceClient401ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetServiceClient401ApplicationProblemPlusJSONResponse) VisitGetServiceClientResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetServiceClient403ApplicationProblemPlusJSONResponse Problem
+
+func (response GetServiceClient403ApplicationProblemPlusJSONResponse) VisitGetServiceClientResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetServiceClient404ApplicationProblemPlusJSONResponse Problem
+
+func (response GetServiceClient404ApplicationProblemPlusJSONResponse) VisitGetServiceClientResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetServiceClient503ApplicationProblemPlusJSONResponse Problem
+
+func (response GetServiceClient503ApplicationProblemPlusJSONResponse) VisitGetServiceClientResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RotateServiceClientSecretRequestObject struct {
+	ClientId ClientId `json:"client_id"`
+}
+
+type RotateServiceClientSecretResponseObject interface {
+	VisitRotateServiceClientSecretResponse(w http.ResponseWriter) error
+}
+
+type RotateServiceClientSecret200JSONResponse ServiceClientWithSecret
+
+func (response RotateServiceClientSecret200JSONResponse) VisitRotateServiceClientSecretResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RotateServiceClientSecret401ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response RotateServiceClientSecret401ApplicationProblemPlusJSONResponse) VisitRotateServiceClientSecretResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RotateServiceClientSecret403ApplicationProblemPlusJSONResponse Problem
+
+func (response RotateServiceClientSecret403ApplicationProblemPlusJSONResponse) VisitRotateServiceClientSecretResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RotateServiceClientSecret404ApplicationProblemPlusJSONResponse Problem
+
+func (response RotateServiceClientSecret404ApplicationProblemPlusJSONResponse) VisitRotateServiceClientSecretResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RotateServiceClientSecret503ApplicationProblemPlusJSONResponse Problem
+
+func (response RotateServiceClientSecret503ApplicationProblemPlusJSONResponse) VisitRotateServiceClientSecretResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMachineAuditEventsRequestObject struct {
+	Params ListMachineAuditEventsParams
+}
+
+type ListMachineAuditEventsResponseObject interface {
+	VisitListMachineAuditEventsResponse(w http.ResponseWriter) error
+}
+
+type ListMachineAuditEvents200JSONResponse MachineAuditEventPage
+
+func (response ListMachineAuditEvents200JSONResponse) VisitListMachineAuditEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMachineAuditEvents400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response ListMachineAuditEvents400ApplicationProblemPlusJSONResponse) VisitListMachineAuditEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMachineAuditEvents401ApplicationProblemPlusJSONResponse Problem
+
+func (response ListMachineAuditEvents401ApplicationProblemPlusJSONResponse) VisitListMachineAuditEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMachineAuditEvents403ApplicationProblemPlusJSONResponse Problem
+
+func (response ListMachineAuditEvents403ApplicationProblemPlusJSONResponse) VisitListMachineAuditEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMachineAuditEvents422ApplicationProblemPlusJSONResponse Problem
+
+func (response ListMachineAuditEvents422ApplicationProblemPlusJSONResponse) VisitListMachineAuditEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMachineAuditEvents429ApplicationProblemPlusJSONResponse Problem
+
+func (response ListMachineAuditEvents429ApplicationProblemPlusJSONResponse) VisitListMachineAuditEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMachineAuditEvents503ApplicationProblemPlusJSONResponse Problem
+
+func (response ListMachineAuditEvents503ApplicationProblemPlusJSONResponse) VisitListMachineAuditEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMachineCustomerRequestObject struct {
+	Id IdentityId `json:"id"`
+}
+
+type GetMachineCustomerResponseObject interface {
+	VisitGetMachineCustomerResponse(w http.ResponseWriter) error
+}
+
+type GetMachineCustomer200JSONResponse MachineCustomer
+
+func (response GetMachineCustomer200JSONResponse) VisitGetMachineCustomerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMachineCustomer400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetMachineCustomer400ApplicationProblemPlusJSONResponse) VisitGetMachineCustomerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMachineCustomer401ApplicationProblemPlusJSONResponse Problem
+
+func (response GetMachineCustomer401ApplicationProblemPlusJSONResponse) VisitGetMachineCustomerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMachineCustomer403ApplicationProblemPlusJSONResponse Problem
+
+func (response GetMachineCustomer403ApplicationProblemPlusJSONResponse) VisitGetMachineCustomerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMachineCustomer404ApplicationProblemPlusJSONResponse Problem
+
+func (response GetMachineCustomer404ApplicationProblemPlusJSONResponse) VisitGetMachineCustomerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMachineCustomer422ApplicationProblemPlusJSONResponse Problem
+
+func (response GetMachineCustomer422ApplicationProblemPlusJSONResponse) VisitGetMachineCustomerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMachineCustomer429ApplicationProblemPlusJSONResponse Problem
+
+func (response GetMachineCustomer429ApplicationProblemPlusJSONResponse) VisitGetMachineCustomerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMachineCustomer503ApplicationProblemPlusJSONResponse Problem
+
+func (response GetMachineCustomer503ApplicationProblemPlusJSONResponse) VisitGetMachineCustomerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetMeRequestObject struct {
 }
 
@@ -2682,6 +3753,27 @@ type StrictServerInterface interface {
 	// GetAdminMe Current admin session; the only admin endpoint reachable at AAL1
 	// (GET /admin/v1/me)
 	GetAdminMe(ctx context.Context, request GetAdminMeRequestObject) (GetAdminMeResponseObject, error)
+	// ListServiceClients List machine clients managed by identity-service (permission manage_service_clients)
+	// (GET /admin/v1/service-clients)
+	ListServiceClients(ctx context.Context, request ListServiceClientsRequestObject) (ListServiceClientsResponseObject, error)
+	// CreateServiceClient Register a client_credentials client (permission manage_service_clients; secret returned once)
+	// (POST /admin/v1/service-clients)
+	CreateServiceClient(ctx context.Context, request CreateServiceClientRequestObject) (CreateServiceClientResponseObject, error)
+	// DeleteServiceClient Delete a machine client; its tokens stop working within 30 s (permission manage_service_clients)
+	// (DELETE /admin/v1/service-clients/{client_id})
+	DeleteServiceClient(ctx context.Context, request DeleteServiceClientRequestObject) (DeleteServiceClientResponseObject, error)
+	// GetServiceClient Get one machine client (permission manage_service_clients)
+	// (GET /admin/v1/service-clients/{client_id})
+	GetServiceClient(ctx context.Context, request GetServiceClientRequestObject) (GetServiceClientResponseObject, error)
+	// RotateServiceClientSecret Replace the client secret; the old one stops working immediately (permission manage_service_clients)
+	// (POST /admin/v1/service-clients/{client_id}/rotate-secret)
+	RotateServiceClientSecret(ctx context.Context, request RotateServiceClientSecretRequestObject) (RotateServiceClientSecretResponseObject, error)
+	// ListMachineAuditEvents List audit events, newest first (scope audit:read)
+	// (GET /m2m/v1/audit-events)
+	ListMachineAuditEvents(ctx context.Context, request ListMachineAuditEventsRequestObject) (ListMachineAuditEventsResponseObject, error)
+	// GetMachineCustomer Customer status for service clients (scope customers:read); no personal data
+	// (GET /m2m/v1/customers/{id})
+	GetMachineCustomer(ctx context.Context, request GetMachineCustomerRequestObject) (GetMachineCustomerResponseObject, error)
 	// GetMe Current customer profile
 	// (GET /v1/me)
 	GetMe(ctx context.Context, request GetMeRequestObject) (GetMeResponseObject, error)
@@ -3113,6 +4205,193 @@ func (sh *strictHandler) GetAdminMe(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetAdminMeResponseObject); ok {
 		if err := validResponse.VisitGetAdminMeResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListServiceClients operation middleware
+func (sh *strictHandler) ListServiceClients(w http.ResponseWriter, r *http.Request) {
+	var request ListServiceClientsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListServiceClients(ctx, request.(ListServiceClientsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListServiceClients")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListServiceClientsResponseObject); ok {
+		if err := validResponse.VisitListServiceClientsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateServiceClient operation middleware
+func (sh *strictHandler) CreateServiceClient(w http.ResponseWriter, r *http.Request, params CreateServiceClientParams) {
+	var request CreateServiceClientRequestObject
+
+	request.Params = params
+
+	var body CreateServiceClientJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateServiceClient(ctx, request.(CreateServiceClientRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateServiceClient")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateServiceClientResponseObject); ok {
+		if err := validResponse.VisitCreateServiceClientResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteServiceClient operation middleware
+func (sh *strictHandler) DeleteServiceClient(w http.ResponseWriter, r *http.Request, clientId ClientId) {
+	var request DeleteServiceClientRequestObject
+
+	request.ClientId = clientId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteServiceClient(ctx, request.(DeleteServiceClientRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteServiceClient")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteServiceClientResponseObject); ok {
+		if err := validResponse.VisitDeleteServiceClientResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetServiceClient operation middleware
+func (sh *strictHandler) GetServiceClient(w http.ResponseWriter, r *http.Request, clientId ClientId) {
+	var request GetServiceClientRequestObject
+
+	request.ClientId = clientId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetServiceClient(ctx, request.(GetServiceClientRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetServiceClient")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetServiceClientResponseObject); ok {
+		if err := validResponse.VisitGetServiceClientResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RotateServiceClientSecret operation middleware
+func (sh *strictHandler) RotateServiceClientSecret(w http.ResponseWriter, r *http.Request, clientId ClientId) {
+	var request RotateServiceClientSecretRequestObject
+
+	request.ClientId = clientId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RotateServiceClientSecret(ctx, request.(RotateServiceClientSecretRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RotateServiceClientSecret")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RotateServiceClientSecretResponseObject); ok {
+		if err := validResponse.VisitRotateServiceClientSecretResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListMachineAuditEvents operation middleware
+func (sh *strictHandler) ListMachineAuditEvents(w http.ResponseWriter, r *http.Request, params ListMachineAuditEventsParams) {
+	var request ListMachineAuditEventsRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListMachineAuditEvents(ctx, request.(ListMachineAuditEventsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListMachineAuditEvents")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListMachineAuditEventsResponseObject); ok {
+		if err := validResponse.VisitListMachineAuditEventsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetMachineCustomer operation middleware
+func (sh *strictHandler) GetMachineCustomer(w http.ResponseWriter, r *http.Request, id IdentityId) {
+	var request GetMachineCustomerRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetMachineCustomer(ctx, request.(GetMachineCustomerRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetMachineCustomer")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetMachineCustomerResponseObject); ok {
+		if err := validResponse.VisitGetMachineCustomerResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

@@ -142,10 +142,15 @@ const (
 	// PermRevealCustomerPII allows the full (unmasked) view of customer PII;
 	// every use is audited.
 	PermRevealCustomerPII Permission = "reveal_customer_pii"
+	// PermManageServiceClients registers, rotates and deletes machine
+	// clients (super_admins only).
+	PermManageServiceClients Permission = "manage_service_clients"
 )
 
 // AllPermissions is the set reported by /admin/v1/me.
-var AllPermissions = []Permission{PermViewCustomers, PermManageCustomers, PermManageAdmins, PermViewAudit, PermRevealCustomerPII}
+var AllPermissions = []Permission{
+	PermViewCustomers, PermManageCustomers, PermManageAdmins, PermViewAudit, PermRevealCustomerPII, PermManageServiceClients,
+}
 
 // Identity is a Kratos identity as seen through the admin API.
 type Identity struct {

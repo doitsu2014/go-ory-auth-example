@@ -1,6 +1,6 @@
 // Command identity-service is the go-ory-auth-example domain service around
-// identity: serve | migrate up | admin bootstrap | keys rewrap |
-// pii reapply-erasures | healthcheck.
+// identity: serve | migrate up | admin bootstrap | clients create |
+// keys rewrap | pii reapply-erasures | healthcheck.
 package main
 
 import (
@@ -21,6 +21,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/adapter/httpapi"
+	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/adapter/hydra"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/adapter/keto"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/adapter/kratos"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/adapter/localkms"
@@ -29,6 +30,7 @@ import (
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/adapter/postgres"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/app"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/identity"
+	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/machine"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/platform"
 )
 
@@ -47,8 +49,8 @@ func newRoot(stdout, stderr io.Writer) *cobra.Command {
 	}
 	root.SetOut(stdout)
 	root.SetErr(stderr)
-	root.AddCommand(serveCmd(stderr), migrateCmd(stderr), adminCmd(stdout, stderr), keysCmd(stdout, stderr),
-		piiCmd(stdout, stderr), healthcheckCmd())
+	root.AddCommand(serveCmd(stderr), migrateCmd(stderr), adminCmd(stdout, stderr), clientsCmd(stdout, stderr),
+		keysCmd(stdout, stderr), piiCmd(stdout, stderr), healthcheckCmd())
 	return root
 }
 
@@ -156,6 +158,30 @@ func serve(ctx context.Context, cfg platform.Config, log *slog.Logger) error {
 	}
 	dekCache := app.NewDEKCache(cfg.PIIDEKCacheSize, cfg.PIIDEKCacheTTL, nil)
 
+	// Machine-to-machine access (Hydra). The JWKS warm-up may fail while
+	// Hydra starts; the machine plane then answers 503 until it is reachable.
+	for _, w := range cfg.Warnings() {
+		log.WarnContext(ctx, "configuration warning", "warning", w)
+	}
+	tagKey, err := cfg.ClientTagKey()
+	if err != nil {
+		return err
+	}
+	hydraAdmin, err := hydra.NewAdmin(cfg.HydraAdminURL, cfg.M2MAudience, tagKey, hc)
+	if err != nil {
+		return err
+	}
+	machineVerifier, err := hydra.NewVerifier(hydra.VerifierConfig{
+		JWKSURL: cfg.M2MJWKSURL, Issuer: cfg.M2MIssuer, Audience: cfg.M2MAudience, Admin: hydraAdmin,
+		ClientCacheTTL: cfg.M2MClientCacheTTL, Log: log,
+	})
+	if err != nil {
+		return err
+	}
+	if err := machineVerifier.RefreshKeys(ctx); err != nil {
+		log.WarnContext(ctx, "jwks warm-up failed; retrying on demand", "error", err.Error())
+	}
+
 	gate := &app.AdminGate{
 		Identities: kadmin, Sessions: verifier, Tx: store, Clock: clock, Log: log,
 		MaxAge: cfg.AdminSessionMaxAge, MFAGrace: cfg.AdminMFAGrace,
@@ -177,11 +203,17 @@ func serve(ctx context.Context, cfg platform.Config, log *slog.Logger) error {
 			RevealLimiter: app.NewRateLimiter(app.RevealRateRules, nil),
 			MaskedLimiter: app.NewRateLimiter(app.MaskedRateRules, nil),
 		},
+		Machine: &app.MachineService{Identities: kadmin, Audit: repos.Audit},
+		ServiceClients: &app.ServiceClientService{
+			Authz: authz, Clients: hydraAdmin, Verifier: machineVerifier, Tx: store, Idempotency: repos.Idempotency,
+			Clock: clock, Log: log,
+		},
 	}
 	metrics := httpapi.NewMetrics()
 	public, err := httpapi.NewPublicHandler(httpapi.PublicDeps{
 		Log: log, Metrics: metrics, Server: server, Verifier: verifier, Gate: gate, Authz: authz,
 		AllowedOrigins: cfg.CORSAllowedOrigins, TrustedHops: cfg.TrustedProxyHops,
+		MachineVerifier: machineVerifier, MachineClientLimiter: httpapi.NewMachineClientLimiter(cfg.M2MRateLimitPerMin, nil),
 	})
 	if err != nil {
 		return fmt.Errorf("refusing to start: %w", err)
@@ -228,6 +260,10 @@ func serve(ctx context.Context, cfg platform.Config, log *slog.Logger) error {
 	}
 	g.Go(func() error {
 		sweepDEKCache(gctx, dekCache)
+		return nil
+	})
+	g.Go(func() error {
+		machineVerifier.Run(gctx)
 		return nil
 	})
 	g.Go(func() error {
@@ -449,6 +485,86 @@ func adminCmd(stdout, stderr io.Writer) *cobra.Command {
 	_ = bootstrap.MarkFlagRequired("email")
 	cmd.AddCommand(bootstrap)
 	return cmd
+}
+
+// clientsCmd registers machine clients from a trusted operator shell
+// (M2M-FR-13). The secret is printed to stdout once and never logged.
+func clientsCmd(stdout, stderr io.Writer) *cobra.Command {
+	cmd := &cobra.Command{Use: "clients", Short: "Machine-to-machine service clients (operator)"}
+	var name, owner string
+	var scopes []string
+	create := &cobra.Command{
+		Use:   "create",
+		Short: "Register a client_credentials client at Hydra and print its secret once (audited as the system actor)",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfg, log, err := loadConfig(stderr)
+			if err != nil {
+				return err
+			}
+			if cfg.DatabaseURL == "" {
+				return errors.New("DATABASE_URL is required")
+			}
+			if err := cfg.ValidateHydraAdmin(); err != nil {
+				return err
+			}
+			if cfg.M2MAudience == "" {
+				return errors.New("M2M_AUDIENCE is required")
+			}
+			tagKey, err := cfg.ClientTagKey()
+			if err != nil {
+				return err
+			}
+			hadmin, err := hydra.NewAdmin(cfg.HydraAdminURL, cfg.M2MAudience, tagKey, oryHTTP(cfg))
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			pool, err := postgres.Open(ctx, cfg.DatabaseURL)
+			if err != nil {
+				return err
+			}
+			defer pool.Close()
+			store := postgres.NewStore(pool)
+			svc := &app.ServiceClientService{
+				Clients: hadmin, Tx: store,
+				Idempotency: store.Repos().Idempotency, Clock: app.SystemClock{}, Log: log,
+			}
+			res, err := svc.CreateAsSystem(ctx, name, owner, scopes)
+			if err != nil {
+				var ve *app.ValidationError
+				if errors.As(err, &ve) {
+					parts := make([]string, len(ve.Fields))
+					for i, f := range ve.Fields {
+						parts[i] = f.Field + ": " + f.Code
+					}
+					return fmt.Errorf("invalid input (%s)", strings.Join(parts, ", "))
+				}
+				return err
+			}
+			c := res.Client
+			// Printed to the operator's terminal only; never logged.
+			_, _ = fmt.Fprintf(stdout, "service client created: client_id=%s name=%s scopes=%s\n",
+				c.ClientID, c.Name, strings.Join(scopeStrings(c), " "))
+			_, _ = fmt.Fprintf(stdout, "client_secret (shown once, store it in a secret manager now): %s\n", res.Secret)
+			return nil
+		},
+	}
+	create.Flags().StringVar(&name, "name", "", "client name, 3-64 chars [a-z0-9-] (required)")
+	create.Flags().StringVar(&owner, "owner", "", "owner contact email (required)")
+	create.Flags().StringSliceVar(&scopes, "scope", nil, "scope: customers:read | audit:read (repeatable, required)")
+	_ = create.MarkFlagRequired("name")
+	_ = create.MarkFlagRequired("owner")
+	_ = create.MarkFlagRequired("scope")
+	cmd.AddCommand(create)
+	return cmd
+}
+
+func scopeStrings(c machine.ServiceClient) []string {
+	out := make([]string, len(c.Scopes))
+	for i, s := range c.Scopes {
+		out[i] = string(s)
+	}
+	return out
 }
 
 // healthcheckCmd lets the distroless container probe itself (no shell/curl).
