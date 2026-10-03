@@ -10,6 +10,8 @@
   "newPassword": "Mật khẩu mới",
   "firstName": "Tên",
   "lastName": "Họ",
+  "fullName": "Họ và tên",
+  "personName": "{last} {first}",
   "forgotPassword": "Quên mật khẩu?",
   "noAccount": "Chưa có tài khoản? Đăng ký",
   "haveAccount": "Đã có tài khoản? Đăng nhập",

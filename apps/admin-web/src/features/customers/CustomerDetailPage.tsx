@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Link, useParams } from "react-router";
 
 import { useCan } from "../../auth/me";
-import { formatDateTime, personName } from "../../shared/format";
+import { formatDateTime } from "../../shared/format";
 import { problemMessage } from "../../shared/problem";
 import { showToast } from "../../shared/toast";
 import { Alert } from "../../shared/ui/Alert";
@@ -82,7 +82,6 @@ export function CustomerDetailPage() {
           {(
             [
               [t("customers.id"), <code key="id">{c.id}</code>],
-              [t("customers.name"), personName(c.name)],
               [t("customers.displayName"), c.display_name ?? "—"],
               [t("customers.state"), <StateBadge key="s" state={c.state} />],
               [t("customers.emailVerified"), c.email_verified ? t("admins.yes") : t("admins.no")],

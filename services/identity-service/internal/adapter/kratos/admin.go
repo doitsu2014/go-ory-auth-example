@@ -249,3 +249,66 @@ func (a *Admin) Ready(ctx context.Context) error {
 	}
 	return nil
 }
+
+var _ app.NameTraitAdmin = (*Admin)(nil)
+
+type jsonPatchRemove struct {
+	Op   string `json:"op"`
+	Path string `json:"path"`
+}
+
+// RemoveTraitName implements app.NameTraitAdmin. Kratos v26 rejects the JSON
+// Patch "test" operation ("unsupported operation: test"), so the check is a
+// read-compare-remove: the identity is re-read, the name trait must still
+// equal old (else ErrConflict), then PATCH [remove /traits/name]. The window
+// between read and patch is not atomic; the customer schema no longer
+// accepts a name, so only an operator could change it meanwhile. The name is
+// never logged or put into errors.
+func (a *Admin) RemoveTraitName(ctx context.Context, id uuid.UUID, old identity.Name) error {
+	for attempt := 0; ; attempt++ {
+		present, cur, err := a.nameTrait(ctx, id)
+		if err != nil || !present {
+			return err
+		}
+		if cur != old {
+			return fmt.Errorf("%w: name trait changed", app.ErrConflict)
+		}
+		resp, err := a.c.do(ctx, http.MethodPatch, "/admin/identities/"+id.String(), nil,
+			[]jsonPatchRemove{{Op: "remove", Path: "/traits/name"}})
+		if err != nil {
+			return err
+		}
+		switch resp.status {
+		case http.StatusOK:
+			return nil
+		case http.StatusNotFound:
+			return app.ErrNotFound
+		case http.StatusBadRequest, http.StatusConflict:
+			if attempt == 0 { // e.g. removed concurrently: re-read once
+				continue
+			}
+		}
+		return resp.unexpected("patch identity name")
+	}
+}
+
+// nameTrait reads whether traits.name is present (even as an empty object)
+// and its value.
+func (a *Admin) nameTrait(ctx context.Context, id uuid.UUID) (bool, identity.Name, error) {
+	resp, err := a.c.do(ctx, http.MethodGet, "/admin/identities/"+id.String(), nil, nil)
+	if err != nil {
+		return false, identity.Name{}, err
+	}
+	switch resp.status {
+	case http.StatusOK:
+	case http.StatusNotFound:
+		return false, identity.Name{}, app.ErrNotFound
+	default:
+		return false, identity.Name{}, resp.unexpected("get identity")
+	}
+	var k kIdentity
+	if err := resp.decode(&k); err != nil {
+		return false, identity.Name{}, err
+	}
+	return k.Traits.Name != nil, k.name(), nil
+}

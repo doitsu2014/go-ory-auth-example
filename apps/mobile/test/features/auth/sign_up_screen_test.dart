@@ -23,8 +23,6 @@ void main() {
         flowId: any(named: 'flowId'),
         email: any(named: 'email'),
         password: any(named: 'password'),
-        firstName: any(named: 'firstName'),
-        lastName: any(named: 'lastName'),
       ),
     ).thenAnswer((_) => answer());
   }
@@ -34,8 +32,6 @@ void main() {
       find.byKey(const Key('signUp.email')),
       'an@example.com',
     );
-    await tester.enterText(find.byKey(const Key('signUp.first')), 'An');
-    await tester.enterText(find.byKey(const Key('signUp.last')), 'Nguyen');
     await tester.enterText(find.byKey(const Key('signUp.password')), 'short');
     await tester.tap(find.byKey(const Key('signUp.submit')));
   }
@@ -47,14 +43,14 @@ void main() {
       overrides: authOverrides(repo),
     );
     verify(repo.startRegistration).called(1);
-    for (final k in [
-      'signUp.email',
-      'signUp.first',
-      'signUp.last',
-      'signUp.password',
-    ]) {
+    for (final k in ['signUp.email', 'signUp.password']) {
       expect(find.byKey(Key(k)), findsOneWidget);
     }
+    // NAME-FR-09: sign-up asks only email + password.
+    for (final k in ['signUp.first', 'signUp.last']) {
+      expect(find.byKey(Key(k)), findsNothing);
+    }
+    expect(find.byType(TextField), findsNWidgets(2));
     expect(find.byKey(const Key('flow.messages')), findsNothing);
   });
 
@@ -71,6 +67,24 @@ void main() {
     expect(find.byKey(const Key('flow.submitting')), findsOneWidget);
     pending.complete(RegistrationOutcome(session: session()));
     await tester.pumpAndSettle();
+  });
+
+  testWidgets('submits only email + password (no name)', (tester) async {
+    stubRegister(() async => RegistrationOutcome(session: session()));
+    await pumpScreen(
+      tester,
+      const SignUpScreen(),
+      overrides: authOverrides(repo),
+    );
+    await fillAndSubmit(tester);
+    await tester.pumpAndSettle();
+    verify(
+      () => repo.register(
+        flowId: 'reg-1',
+        email: 'an@example.com',
+        password: 'short',
+      ),
+    ).called(1);
   });
 
   testWidgets('field errors: password policy + email taken, localised', (

@@ -3,6 +3,45 @@
 // Hand-written like `me.dart`. Values are PII: these types never override
 // `toString` with field values and are never persisted or logged.
 
+/// `PersonName` schema: `{first?, last?}`, each trimmed, ≤ 100 runes, no
+/// control characters. An object with both parts empty means "no name".
+class PersonName {
+  const PersonName({this.first, this.last});
+
+  factory PersonName.fromJson(Map<String, dynamic> json) => PersonName(
+    first: json['first'] as String?,
+    last: json['last'] as String?,
+  );
+
+  /// `null` when both parts are missing or blank (treated as absent).
+  static PersonName? parse(Object? json) {
+    if (json is! Map) return null;
+    final n = PersonName.fromJson(json.cast<String, dynamic>());
+    return n.isEmpty ? null : n;
+  }
+
+  final String? first;
+  final String? last;
+
+  bool get isEmpty =>
+      (first?.trim().isEmpty ?? true) && (last?.trim().isEmpty ?? true);
+
+  /// "first last" (blank parts skipped).
+  String get full => [
+    first,
+    last,
+  ].whereType<String>().where((s) => s.trim().isNotEmpty).join(' ');
+
+  /// Blank parts are omitted (`additionalProperties: false`).
+  Map<String, dynamic> toJson() => {
+    if (first != null && first!.isNotEmpty) 'first': first,
+    if (last != null && last!.isNotEmpty) 'last': last,
+  };
+
+  @override
+  String toString() => 'PersonName(<redacted>)';
+}
+
 /// `Address` schema. Required: line1, city, country (ISO 3166-1 alpha-2).
 class Address {
   const Address({
@@ -73,6 +112,7 @@ class NationalId {
 /// (explicit `null` clears); `updated_at` is read-only and never sent.
 class PersonalInfo {
   const PersonalInfo({
+    this.name,
     this.phoneNumber,
     this.dateOfBirth,
     this.address,
@@ -81,6 +121,7 @@ class PersonalInfo {
   });
 
   factory PersonalInfo.fromJson(Map<String, dynamic> json) => PersonalInfo(
+    name: PersonName.parse(json['name']),
     phoneNumber: json['phone_number'] as String?,
     dateOfBirth: json['date_of_birth'] is String
         ? parseDate(json['date_of_birth'] as String)
@@ -98,6 +139,8 @@ class PersonalInfo {
         : null,
   );
 
+  /// `null` when never set or both parts are empty.
+  final PersonName? name;
   final String? phoneNumber;
 
   /// Calendar date only (year/month/day are meaningful; time is ignored).
@@ -107,12 +150,14 @@ class PersonalInfo {
   final DateTime? updatedAt;
 
   bool get isEmpty =>
+      name == null &&
       phoneNumber == null &&
       dateOfBirth == null &&
       address == null &&
       nationalId == null;
 
   Map<String, dynamic> toJson() => {
+    'name': name == null || name!.isEmpty ? null : name!.toJson(),
     'phone_number': phoneNumber,
     'date_of_birth': dateOfBirth == null ? null : formatDate(dateOfBirth!),
     'address': address?.toJson(),

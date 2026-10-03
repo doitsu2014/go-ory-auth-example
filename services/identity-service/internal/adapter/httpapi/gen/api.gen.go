@@ -149,6 +149,7 @@ func (e Permission) Valid() bool {
 const (
 	RevealRequestFieldsAddress     RevealRequestFields = "address"
 	RevealRequestFieldsDateOfBirth RevealRequestFields = "date_of_birth"
+	RevealRequestFieldsName        RevealRequestFields = "name"
 	RevealRequestFieldsNationalId  RevealRequestFields = "national_id"
 	RevealRequestFieldsPhoneNumber RevealRequestFields = "phone_number"
 )
@@ -159,6 +160,8 @@ func (e RevealRequestFields) Valid() bool {
 	case RevealRequestFieldsAddress:
 		return true
 	case RevealRequestFieldsDateOfBirth:
+		return true
+	case RevealRequestFieldsName:
 		return true
 	case RevealRequestFieldsNationalId:
 		return true
@@ -295,13 +298,18 @@ type CreateServiceClientRequest struct {
 
 // Customer defines model for Customer.
 type Customer struct {
-	CreatedAt     time.Time                 `json:"created_at"`
+	CreatedAt time.Time `json:"created_at"`
+
+	// DisplayName Optional nickname; not the real name
 	DisplayName   nullable.Nullable[string] `json:"display_name,omitempty"`
 	Email         openapi_types.Email       `json:"email"`
 	EmailVerified bool                      `json:"email_verified"`
 	Id            openapi_types.UUID        `json:"id"`
-	Name          *PersonName               `json:"name,omitempty"`
-	State         IdentityState             `json:"state"`
+
+	// Name Never returned for customers. The name is encrypted personal info (masked via /admin/v1/customers/{id}/personal-info).
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
+	Name  *PersonName   `json:"name,omitempty"`
+	State IdentityState `json:"state"`
 }
 
 // CustomerLookupRequest defines model for CustomerLookupRequest.
@@ -405,9 +413,19 @@ type MaskedPersonalInfo struct {
 	DateOfBirth    nullable.Nullable[string] `json:"date_of_birth,omitempty"`
 	HasAddress     bool                      `json:"has_address"`
 	HasDateOfBirth bool                      `json:"has_date_of_birth"`
+	HasName        bool                      `json:"has_name"`
 	HasNationalId  bool                      `json:"has_national_id"`
 	HasPhoneNumber bool                      `json:"has_phone_number"`
-	NationalId     nullable.Nullable[struct {
+
+	// Name First character of each part + fixed "***"
+	Name nullable.Nullable[struct {
+		// First Example: A***
+		First nullable.Nullable[string] `json:"first,omitempty"`
+
+		// Last Example: N***
+		Last nullable.Nullable[string] `json:"last,omitempty"`
+	}] `json:"name,omitempty"`
+	NationalId nullable.Nullable[struct {
 		// Number Fixed 6 stars; last 3 only when the number has ≥ 9 characters
 		//
 		// Example: ******123
@@ -427,16 +445,21 @@ type MaskedPersonalInfoNationalIdType string
 
 // Me defines model for Me.
 type Me struct {
-	AvatarUrl     nullable.Nullable[string] `json:"avatar_url,omitempty"`
-	CreatedAt     time.Time                 `json:"created_at"`
+	AvatarUrl nullable.Nullable[string] `json:"avatar_url,omitempty"`
+	CreatedAt time.Time                 `json:"created_at"`
+
+	// DisplayName Optional nickname; not the real name
 	DisplayName   nullable.Nullable[string] `json:"display_name,omitempty"`
 	Email         openapi_types.Email       `json:"email"`
 	EmailVerified bool                      `json:"email_verified"`
 	Id            openapi_types.UUID        `json:"id"`
 
 	// Locale Example: vi-VN
-	Locale string      `json:"locale"`
-	Name   *PersonName `json:"name,omitempty"`
+	Locale string `json:"locale"`
+
+	// Name Never returned. The customer's name is encrypted personal info (GET /v1/me/personal-info).
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
+	Name *PersonName `json:"name,omitempty"`
 }
 
 // NationalId defines model for NationalId.
@@ -462,7 +485,10 @@ type PersonName struct {
 type PersonalInfo struct {
 	Address     nullable.Nullable[Address]            `json:"address,omitempty"`
 	DateOfBirth nullable.Nullable[openapi_types.Date] `json:"date_of_birth,omitempty"`
-	NationalId  nullable.Nullable[NationalId]         `json:"national_id,omitempty"`
+
+	// Name Real name. Each part trimmed, no control characters; both parts empty = absent
+	Name       nullable.Nullable[PersonName] `json:"name,omitempty"`
+	NationalId nullable.Nullable[NationalId] `json:"national_id,omitempty"`
 
 	// PhoneNumber E.164; spaces, dashes and dots are stripped
 	//

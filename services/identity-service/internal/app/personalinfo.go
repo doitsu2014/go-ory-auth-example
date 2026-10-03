@@ -99,6 +99,10 @@ type PersonalInfoService struct {
 	Records     CustomerPIIRepo
 	Clock       Clock
 	Log         *slog.Logger
+	// NameTraits removes a legacy Kratos name trait on erase (MAJOR-2); nil
+	// disables that step (customers created after the schema change have no
+	// name trait).
+	NameTraits NameTraitAdmin
 	// Per-actor quotas (nil = unlimited). LookupLimiter is charged per
 	// candidate unwrapped (§9 A11).
 	LookupLimiter *RateLimiter
@@ -179,6 +183,8 @@ func (s *PersonalInfoService) putOnce(ctx context.Context, id uuid.UUID, cols ma
 			return time.Time{}, fmt.Errorf("seal %s: %w", f, err)
 		}
 		switch f {
+		case pii.FieldName:
+			rec.Name = ct
 		case pii.FieldPhoneNumber:
 			rec.Phone = ct
 		case pii.FieldDateOfBirth:
@@ -211,13 +217,21 @@ func (s *PersonalInfoService) putOnce(ctx context.Context, id uuid.UUID, cols ma
 
 // EraseMine crypto-shreds the caller's personal info: one transaction
 // deletes the subject key (cascading to the encrypted record) and appends
-// customer.pii.erased; then the cached DEK is evicted. Idempotent.
-// Permission: any authenticated customer (§9 A14).
+// customer.pii.erased; then the cached DEK is evicted. If the customer still
+// carries a legacy name trait in Kratos, customer.pii.erased is appended
+// even when nothing was stored (so the name migration never stores it), and
+// after that commit the trait is removed; if Kratos cannot be read or
+// updated the erase is incomplete and ErrDependencyUnavailable asks the
+// client to retry (stored data is shredded regardless).
+// Idempotent. Permission: any authenticated customer (§9 A14).
 func (s *PersonalInfoService) EraseMine(ctx context.Context, a Actor) error {
 	p := a.Principal
 	if p.Kind != identity.KindCustomer {
 		return ErrForbidden
 	}
+	// A Kratos outage never blocks shredding the stored data; the erase is
+	// then reported incomplete so the client retries the trait check.
+	legacy, lookupErr := s.legacyName(ctx, p.IdentityID)
 	var keyIDs []uuid.UUID
 	ev := s.event(a, audit.ActionCustomerPIIErased, p.IdentityID, map[string]any{})
 	tctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), mutationTimeout)
@@ -227,8 +241,8 @@ func (s *PersonalInfoService) EraseMine(ctx context.Context, a Actor) error {
 		if err != nil {
 			return fmt.Errorf("delete subject key: %w", err)
 		}
-		if len(ids) == 0 {
-			return nil // nothing stored: nothing to erase or audit
+		if len(ids) == 0 && legacy == nil {
+			return nil // nothing stored anywhere: nothing to erase or audit
 		}
 		keyIDs = ids
 		if err := r.Audit.Append(ctx, ev); err != nil {
@@ -239,7 +253,40 @@ func (s *PersonalInfoService) EraseMine(ctx context.Context, a Actor) error {
 	for _, id := range keyIDs {
 		s.Cache.Evict(id)
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	if lookupErr != nil {
+		return fmt.Errorf("%w: erase incomplete: %v", ErrDependencyUnavailable, lookupErr)
+	}
+	if legacy == nil {
+		return nil
+	}
+	if err := s.NameTraits.RemoveTraitName(tctx, p.IdentityID, *legacy); err != nil && !errors.Is(err, ErrNotFound) {
+		s.log().WarnContext(ctx, "pii_erase_name_trait_removal_failed", "identity_id", p.IdentityID.String())
+		return fmt.Errorf("%w: erase incomplete: remove name trait: %v", ErrDependencyUnavailable, err)
+	}
+	return nil
+}
+
+// legacyName returns the customer's Kratos name trait when one is still
+// present (nil otherwise, or when NameTraits is not configured).
+func (s *PersonalInfoService) legacyName(ctx context.Context, id uuid.UUID) (*identity.Name, error) {
+	if s.NameTraits == nil {
+		return nil, nil
+	}
+	ident, err := s.Identities.GetIdentity(ctx, id)
+	if errors.Is(err, ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get identity: %w", err)
+	}
+	if !ident.HasNameTrait && ident.Name == (identity.Name{}) {
+		return nil, nil
+	}
+	n := ident.Name
+	return &n, nil
 }
 
 // GetMasked returns a customer's masked personal info. Permission:
@@ -393,7 +440,7 @@ func (s *PersonalInfoService) lookupCandidate(ctx context.Context, rec Encrypted
 	if ident.SchemaID != string(identity.KindCustomer) {
 		return LookupMatch{}, false, nil
 	}
-	cols, err := s.openColumns(ctx, dek, rec, []pii.Field{pii.FieldDateOfBirth, pii.FieldAddress, pii.FieldNationalID})
+	cols, err := s.openColumns(ctx, dek, rec, []pii.Field{pii.FieldName, pii.FieldDateOfBirth, pii.FieldAddress, pii.FieldNationalID})
 	defer zeroColumns(cols)
 	if err != nil {
 		return LookupMatch{}, false, nil
@@ -473,6 +520,8 @@ func (s *PersonalInfoService) openColumns(ctx context.Context, dek []byte, rec E
 	for _, f := range fields {
 		var ct []byte
 		switch f {
+		case pii.FieldName:
+			ct = rec.Name
 		case pii.FieldPhoneNumber:
 			ct = rec.Phone
 		case pii.FieldDateOfBirth:
@@ -529,36 +578,43 @@ func (s *PersonalInfoService) dek(ctx context.Context, key SubjectKey) ([]byte, 
 // on first write. A concurrent first write wins via ON CONFLICT DO NOTHING
 // and the loser re-reads.
 func (s *PersonalInfoService) keyFor(ctx context.Context, id uuid.UUID) (SubjectKey, []byte, error) {
+	key, dek, _, err := s.keyForCreated(ctx, id)
+	return key, dek, err
+}
+
+// keyForCreated is keyFor that also reports whether this call created the
+// key (the name migration removes a key it created for an erased subject).
+func (s *PersonalInfoService) keyForCreated(ctx context.Context, id uuid.UUID) (SubjectKey, []byte, bool, error) {
 	key, err := s.SubjectKeys.Get(ctx, id)
 	if err == nil {
 		dek, err := s.dek(ctx, key)
-		return key, dek, err
+		return key, dek, false, err
 	}
 	if !errors.Is(err, ErrNotFound) {
-		return SubjectKey{}, nil, fmt.Errorf("get subject key: %w", err)
+		return SubjectKey{}, nil, false, fmt.Errorf("get subject key: %w", err)
 	}
 	dek, err := envelope.NewDEK()
 	if err != nil {
-		return SubjectKey{}, nil, fmt.Errorf("new data key: %w", err)
+		return SubjectKey{}, nil, false, fmt.Errorf("new data key: %w", err)
 	}
 	kc := KeyContext{IdentityID: id, KeyID: uuid.New()}
 	w, err := s.Keys.WrapDEK(ctx, kc, dek)
 	if err != nil {
 		envelope.Zero(dek)
-		return SubjectKey{}, nil, fmt.Errorf("wrap data key: %w", err)
+		return SubjectKey{}, nil, false, fmt.Errorf("wrap data key: %w", err)
 	}
 	stored, inserted, err := s.SubjectKeys.Insert(ctx, SubjectKey{KeyID: kc.KeyID, IdentityID: id, Wrapped: w})
 	if err != nil {
 		envelope.Zero(dek)
-		return SubjectKey{}, nil, fmt.Errorf("insert subject key: %w", err)
+		return SubjectKey{}, nil, false, fmt.Errorf("insert subject key: %w", err)
 	}
 	if !inserted {
 		envelope.Zero(dek)
 		dek, err := s.dek(ctx, stored)
-		return stored, dek, err
+		return stored, dek, false, err
 	}
 	s.Cache.Put(stored.KeyID, dek)
-	return stored, dek, nil
+	return stored, dek, true, nil
 }
 
 func (s *PersonalInfoService) customer(ctx context.Context, id uuid.UUID) (identity.Identity, error) {

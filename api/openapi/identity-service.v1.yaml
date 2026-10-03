@@ -675,8 +675,12 @@ components:
         id: { type: string, format: uuid }
         email: { type: string, format: email }
         email_verified: { type: boolean }
-        name: { $ref: "#/components/schemas/PersonName" }
-        display_name: { type: string, nullable: true, maxLength: 100 }
+        name:
+          allOf: [{ $ref: "#/components/schemas/PersonName" }]
+          type: object
+          deprecated: true
+          description: Never returned. The customer's name is encrypted personal info (GET /v1/me/personal-info).
+        display_name: { type: string, nullable: true, maxLength: 100, description: "Optional nickname; not the real name" }
         avatar_url: { type: string, nullable: true, maxLength: 2048 }
         locale: { type: string, example: vi-VN }
         created_at: { type: string, format: date-time }
@@ -714,6 +718,11 @@ components:
       additionalProperties: false
       description: Customer PII. Stored encrypted (AES-256-GCM, per-customer key).
       properties:
+        name:
+          allOf: [{ $ref: "#/components/schemas/PersonName" }]
+          type: object
+          nullable: true
+          description: "Real name. Each part trimmed, no control characters; both parts empty = absent"
         phone_number: { type: string, nullable: true, example: "+84901234567", description: "E.164; spaces, dashes and dots are stripped" }
         date_of_birth: { type: string, format: date, nullable: true }
         address:
@@ -728,8 +737,15 @@ components:
 
     MaskedPersonalInfo:
       type: object
-      required: [has_phone_number, has_date_of_birth, has_address, has_national_id]
+      required: [has_name, has_phone_number, has_date_of_birth, has_address, has_national_id]
       properties:
+        name:
+          type: object
+          nullable: true
+          description: First character of each part + fixed "***"
+          properties:
+            first: { type: string, nullable: true, example: "A***" }
+            last: { type: string, nullable: true, example: "N***" }
         phone_number: { type: string, nullable: true, example: "+84*******567", description: "Calling code + fixed 7 stars + last 3" }
         date_of_birth: { type: string, nullable: true, example: "1990-**-**" }
         address:
@@ -744,6 +760,7 @@ components:
           properties:
             type: { type: string, enum: [cccd, passport, other] }
             number: { type: string, example: "******123", description: "Fixed 6 stars; last 3 only when the number has ≥ 9 characters" }
+        has_name: { type: boolean }
         has_phone_number: { type: boolean }
         has_date_of_birth: { type: boolean }
         has_address: { type: boolean }
@@ -765,7 +782,7 @@ components:
           description: Fields to reveal (data minimisation). Omitted = all.
           uniqueItems: true
           minItems: 1
-          items: { type: string, enum: [phone_number, date_of_birth, address, national_id] }
+          items: { type: string, enum: [name, phone_number, date_of_birth, address, national_id] }
 
     CustomerLookupRequest:
       type: object
@@ -901,9 +918,13 @@ components:
         id: { type: string, format: uuid }
         email: { type: string, format: email }
         email_verified: { type: boolean }
-        name: { $ref: "#/components/schemas/PersonName" }
+        name:
+          allOf: [{ $ref: "#/components/schemas/PersonName" }]
+          type: object
+          deprecated: true
+          description: Never returned for customers. The name is encrypted personal info (masked via /admin/v1/customers/{id}/personal-info).
         state: { $ref: "#/components/schemas/IdentityState" }
-        display_name: { type: string, nullable: true }
+        display_name: { type: string, nullable: true, description: "Optional nickname; not the real name" }
         created_at: { type: string, format: date-time }
 
     CustomerPage:

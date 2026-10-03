@@ -40,6 +40,14 @@ class AppLocalizationsEn extends AppLocalizations {
   String get lastName => 'Last name';
 
   @override
+  String get fullName => 'Full name';
+
+  @override
+  String personName(String first, String last) {
+    return '$first $last';
+  }
+
+  @override
   String get forgotPassword => 'Forgot password?';
 
   @override

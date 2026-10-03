@@ -114,8 +114,6 @@ void main() {
       flowId: regFlow.id,
       email: email,
       password: password,
-      firstName: 'Mobile',
-      lastName: 'Tester',
     );
     final token = await tokens.read();
     expect(token, startsWith('ory_st_'));

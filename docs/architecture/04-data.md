@@ -5,7 +5,8 @@
 | Data | Source of truth | Others may |
 | --- | --- | --- |
 | Credentials, MFA secrets, sessions | Kratos (`kratos` DB) | Nothing — never read |
-| Traits (email, name) | Kratos | Read via Kratos API (session payload or admin API) |
+| Traits (customer: email only; admin: email, name) | Kratos | Read via Kratos API (session payload or admin API) |
+| Customer personal info (name, phone, DOB, address, national id) | identity-service, encrypted (`customer_pii`) | Read via `/v1/me/personal-info`; admins masked / reveal ([08](08-pii-protection.md)) |
 | Identity state (active / inactive) | Kratos | Change via Kratos admin API |
 | Roles / permissions | Keto (`keto` DB) | Check / write via Keto API |
 | Profile (display name, avatar, locale, preferences) | identity-service (`identity` DB) | Read via `/v1/me`, `/admin/v1/customers/{id}` |
@@ -63,13 +64,6 @@ idle-in-transaction timeout 10 s.
             "verification": { "via": "email" },
             "recovery": { "via": "email" }
           }
-        },
-        "name": {
-          "type": "object",
-          "properties": {
-            "first": { "type": "string", "maxLength": 100, "title": "First name" },
-            "last":  { "type": "string", "maxLength": 100, "title": "Last name" }
-          }
         }
       },
       "required": ["email"],
@@ -80,11 +74,11 @@ idle-in-transaction timeout 10 s.
 ```
 
 `admin` — `selfservice_selectable: false` (created only through the admin API).
-Same `email`/`name` traits, except that the `email` trait has **no
-`credentials.code` identifier**. Admins authenticate only with password + TOTP
+Traits `email` and `name` (the customer schema has no `name`: a customer's
+name is encrypted personal info, see [08 §8.11](08-pii-protection.md#811-migrating-names-out-of-kratos)).
+The `email` trait has **no `credentials.code` identifier**. Admins authenticate only with password + TOTP
 (or lookup secret) and never with an email OTP. Recovery/verification `via: email`
-stays. Keeping the traits otherwise identical keeps UI code shared. The
-**schema id** is what distinguishes the populations.
+stays. The **schema id** is what distinguishes the populations.
 
 Kratos config excerpt:
 
@@ -172,7 +166,7 @@ Design notes (from the team's PostgreSQL rules):
 | Table | Holds | Notes |
 | --- | --- | --- |
 | `subject_key` | `key_id`, `identity_id` (unique), `wrapped_dek` (`vault:vN:…`), `kek_name`, `kek_version`, `rewrapped_at` | One data key per customer. Deleting the row is the erasure |
-| `customer_pii` | `phone_ct`, `phone_bidx` (32 bytes), `bidx_key_version`, `dob_ct`, `address_ct`, `national_id_ct` | Composite FK `(identity_id, key_id)` → `subject_key` with `ON DELETE CASCADE` |
+| `customer_pii` | `name_ct`, `phone_ct`, `phone_bidx` (32 bytes), `bidx_key_version`, `dob_ct`, `address_ct`, `national_id_ct` | Composite FK `(identity_id, key_id)` → `subject_key` with `ON DELETE CASCADE` |
 
 `identity_app` can SELECT, INSERT, UPDATE and DELETE on `subject_key`, but
 only SELECT, INSERT and UPDATE on `customer_pii`. Details are in

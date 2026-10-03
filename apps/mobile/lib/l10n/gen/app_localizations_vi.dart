@@ -40,6 +40,14 @@ class AppLocalizationsVi extends AppLocalizations {
   String get lastName => 'Họ';
 
   @override
+  String get fullName => 'Họ và tên';
+
+  @override
+  String personName(String first, String last) {
+    return '$last $first';
+  }
+
+  @override
   String get forgotPassword => 'Quên mật khẩu?';
 
   @override

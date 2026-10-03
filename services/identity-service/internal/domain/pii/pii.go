@@ -1,5 +1,5 @@
-// Package pii holds the customer personal information entity (phone number,
-// date of birth, address, national id): normalisation, validation, masking
+// Package pii holds the customer personal information entity (name, phone
+// number, date of birth, address, national id): normalisation, validation, masking
 // and the plaintext encodings that are sealed per column.
 //
 // Every type that carries a value redacts itself when formatted, logged
@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/profile"
@@ -34,6 +35,7 @@ type Field string
 
 // Fields.
 const (
+	FieldName        Field = "name"
 	FieldPhoneNumber Field = "phone_number"
 	FieldDateOfBirth Field = "date_of_birth"
 	FieldAddress     Field = "address"
@@ -41,7 +43,7 @@ const (
 )
 
 // AllFields lists every field in a stable order.
-var AllFields = []Field{FieldPhoneNumber, FieldDateOfBirth, FieldAddress, FieldNationalID}
+var AllFields = []Field{FieldName, FieldPhoneNumber, FieldDateOfBirth, FieldAddress, FieldNationalID}
 
 // ParseField validates a field name.
 func ParseField(s string) (Field, bool) {
@@ -55,6 +57,7 @@ func ParseField(s string) (Field, bool) {
 
 // Limits mirror the OpenAPI schema (PII-FR-03).
 const (
+	MaxNamePart   = 100
 	MaxLine       = 200
 	MaxCity       = 100
 	MaxRegion     = 100
@@ -73,6 +76,7 @@ const (
 	phoneBlindIndexPrefix  = "phone_number:"
 	nationalIDMaskedPrefix = "******"
 	phoneMaskedMiddle      = "*******"
+	nameMaskSuffix         = "***"
 )
 
 var (
@@ -138,6 +142,13 @@ func (d Date) AgeAt(now time.Time) int {
 	return age
 }
 
+// Name is a customer's real name (NAME-FR-02). Either part may be empty, not
+// both (Normalize drops an all-empty name).
+type Name struct {
+	First string
+	Last  string
+}
+
 // Address is a postal address.
 type Address struct {
 	Line1      string
@@ -156,6 +167,7 @@ type NationalID struct {
 
 // PersonalInfo is a customer's personal information. nil fields are unset.
 type PersonalInfo struct {
+	Name        *Name
 	Phone       *string // E.164 after Normalize
 	DateOfBirth *Date
 	Address     *Address
@@ -164,12 +176,15 @@ type PersonalInfo struct {
 
 // IsZero reports whether no field is set.
 func (p PersonalInfo) IsZero() bool {
-	return p.Phone == nil && p.DateOfBirth == nil && p.Address == nil && p.NationalID == nil
+	return p.Name == nil && p.Phone == nil && p.DateOfBirth == nil && p.Address == nil && p.NationalID == nil
 }
 
 // FieldNames lists the set fields (for audit details: names, never values).
 func (p PersonalInfo) FieldNames() []string {
 	out := []string{}
+	if p.Name != nil {
+		out = append(out, string(FieldName))
+	}
 	if p.Phone != nil {
 		out = append(out, string(FieldPhoneNumber))
 	}
@@ -190,6 +205,8 @@ func (p PersonalInfo) Only(fields []Field) PersonalInfo {
 	var out PersonalInfo
 	for _, f := range fields {
 		switch f {
+		case FieldName:
+			out.Name = p.Name
 		case FieldPhoneNumber:
 			out.Phone = p.Phone
 		case FieldDateOfBirth:
@@ -232,11 +249,33 @@ func trimPtr(p *string) *string {
 	return &v
 }
 
-// Normalize returns a normalised copy: phone stripped to E.164 form, text
+// isFormatChar reports Unicode format characters (category Cf: zero-width
+// spaces and joiners, bidi overrides and isolates such as U+202E/U+2066),
+// which can make a name render differently from what it stores.
+func isFormatChar(r rune) bool { return unicode.Is(unicode.Cf, r) }
+
+// normalizeNamePart trims whitespace; a part made only of whitespace and
+// format characters is empty (it must not count as a name).
+func normalizeNamePart(s string) string {
+	s = strings.TrimSpace(s)
+	if strings.TrimFunc(s, func(r rune) bool { return unicode.IsSpace(r) || isFormatChar(r) }) == "" {
+		return ""
+	}
+	return s
+}
+
+// Normalize returns a normalised copy: name parts trimmed (an all-empty name
+// is dropped), phone stripped to E.164 form, text
 // trimmed, empty optional text dropped, country and document number
 // upper-cased.
 func (p PersonalInfo) Normalize() PersonalInfo {
 	var out PersonalInfo
+	if n := p.Name; n != nil {
+		v := Name{First: normalizeNamePart(n.First), Last: normalizeNamePart(n.Last)}
+		if v.First != "" || v.Last != "" {
+			out.Name = &v
+		}
+	}
 	if p.Phone != nil {
 		v := NormalizePhone(*p.Phone)
 		out.Phone = &v
@@ -281,6 +320,17 @@ func (p PersonalInfo) Validate(now time.Time) error {
 			text(field, *v, maxLen, false)
 		}
 	}
+	if n := p.Name; n != nil {
+		namePart := func(field, v string) {
+			n := len(errs)
+			text(field, v, MaxNamePart, false)
+			if len(errs) == n && strings.IndexFunc(v, isFormatChar) >= 0 {
+				add(field, CodeInvalidCharacters) // NIT-1: Cf (bidi, zero-width)
+			}
+		}
+		namePart("name.first", n.First)
+		namePart("name.last", n.Last)
+	}
 	if p.Phone != nil && !ValidPhone(*p.Phone) {
 		add(string(FieldPhoneNumber), CodeInvalidFormat)
 	}
@@ -323,6 +373,13 @@ func (p PersonalInfo) Validate(now time.Time) error {
 
 // --- masking (§9 A12: fixed width) ---
 
+// MaskedName is the name as shown to admins: the first character of each
+// part plus a fixed "***" (nil when the part is empty).
+type MaskedName struct {
+	First *string
+	Last  *string
+}
+
 // MaskedAddress is the address as shown to admins: city and country only.
 type MaskedAddress struct {
 	City    string
@@ -337,6 +394,7 @@ type MaskedNationalID struct {
 
 // Masked is the admin view. nil means "not provided".
 type Masked struct {
+	Name        *MaskedName
 	Phone       *string
 	DateOfBirth *string
 	Address     *MaskedAddress
@@ -346,6 +404,9 @@ type Masked struct {
 // Mask applies the fixed-width masking rules.
 func (p PersonalInfo) Mask() Masked {
 	var m Masked
+	if n := p.Name; n != nil {
+		m.Name = &MaskedName{First: maskPart(n.First), Last: maskPart(n.Last)}
+	}
 	if p.Phone != nil {
 		v := MaskPhone(*p.Phone)
 		m.Phone = &v
@@ -361,6 +422,17 @@ func (p PersonalInfo) Mask() Masked {
 		m.NationalID = &MaskedNationalID{Type: n.Type, Number: MaskNationalID(n.Number)}
 	}
 	return m
+}
+
+// maskPart keeps the first character (rune) of a name part and appends a
+// fixed "***", so the mask does not reveal the part's length.
+func maskPart(s string) *string {
+	r, size := utf8.DecodeRuneInString(s)
+	if size == 0 {
+		return nil
+	}
+	v := string(r) + nameMaskSuffix
+	return &v
 }
 
 // MaskPhone keeps "+", the country calling code and the last 3 digits with a
@@ -422,6 +494,24 @@ func (p PersonalInfo) LogValue() slog.Value { return slog.StringValue(Redacted) 
 func (p PersonalInfo) MarshalJSON() ([]byte, error) { return json.Marshal(Redacted) }
 
 // Format implements fmt.Formatter for every verb.
+func (n Name) Format(f fmt.State, verb rune) { redactedFormat(f, verb) }
+
+// String implements fmt.Stringer.
+func (n Name) String() string { return Redacted }
+
+// LogValue implements slog.LogValuer.
+func (n Name) LogValue() slog.Value { return slog.StringValue(Redacted) }
+
+// MarshalJSON never encodes values (use Encode for sealing).
+func (n Name) MarshalJSON() ([]byte, error) { return json.Marshal(Redacted) }
+
+// Format implements fmt.Formatter for every verb.
+func (m MaskedName) Format(f fmt.State, verb rune) { redactedFormat(f, verb) }
+
+// LogValue implements slog.LogValuer.
+func (m MaskedName) LogValue() slog.Value { return slog.StringValue(Redacted) }
+
+// Format implements fmt.Formatter for every verb.
 func (a Address) Format(f fmt.State, verb rune) { redactedFormat(f, verb) }
 
 // String implements fmt.Stringer.
@@ -465,6 +555,11 @@ func (m Masked) LogValue() slog.Value { return slog.StringValue(Redacted) }
 
 // --- plaintext encodings (sealed per column) ---
 
+type nameWire struct {
+	First string `json:"first"`
+	Last  string `json:"last"`
+}
+
 type addressWire struct {
 	Line1      string  `json:"line1"`
 	Line2      *string `json:"line2,omitempty"`
@@ -483,6 +578,13 @@ type nationalIDWire struct {
 // caller seals and then zeroes them.
 func (p PersonalInfo) Encode() (map[Field][]byte, error) {
 	out := map[Field][]byte{}
+	if n := p.Name; n != nil {
+		b, err := EncodeName(*n)
+		if err != nil {
+			return nil, err
+		}
+		out[FieldName] = b
+	}
 	if p.Phone != nil {
 		out[FieldPhoneNumber] = []byte(*p.Phone)
 	}
@@ -506,10 +608,27 @@ func (p PersonalInfo) Encode() (map[Field][]byte, error) {
 	return out, nil
 }
 
+// EncodeName returns the plaintext column encoding of a name (JSON
+// {"first","last"}). The caller seals and then zeroes it.
+func EncodeName(n Name) ([]byte, error) {
+	b, err := json.Marshal(nameWire{First: n.First, Last: n.Last})
+	if err != nil {
+		return nil, ErrCorrupt
+	}
+	return b, nil
+}
+
 // Decode builds a PersonalInfo from decrypted column plaintexts. Errors are
 // ErrCorrupt and never carry the bytes.
 func Decode(cols map[Field][]byte) (PersonalInfo, error) {
 	var p PersonalInfo
+	if b, ok := cols[FieldName]; ok {
+		var w nameWire
+		if err := json.Unmarshal(b, &w); err != nil {
+			return PersonalInfo{}, ErrCorrupt
+		}
+		p.Name = &Name{First: w.First, Last: w.Last}
+	}
 	if b, ok := cols[FieldPhoneNumber]; ok {
 		v := string(b)
 		p.Phone = &v

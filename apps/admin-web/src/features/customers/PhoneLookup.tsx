@@ -4,7 +4,7 @@ import { Link } from "react-router";
 
 import type { CustomerLookupItem } from "../../api/client";
 import { useAuthRedirect } from "../../auth/useAuthRedirect";
-import { formString } from "../../shared/format";
+import { formString, localizedName } from "../../shared/format";
 import { Alert } from "../../shared/ui/Alert";
 import { Button } from "../../shared/ui/Button";
 import { Card } from "../../shared/ui/Card";
@@ -27,7 +27,7 @@ function normalizePhone(raw: string): string {
  * or logs — and results (masked) live in component state.
  */
 export function PhoneLookup() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const formId = useId();
   const redirectOnAuthError = useAuthRedirect();
   const [items, setItems] = useState<CustomerLookupItem[] | null>(null);
@@ -114,6 +114,7 @@ export function PhoneLookup() {
             <tr>
               <Th>{t("customers.id")}</Th>
               <Th>{t("customers.state")}</Th>
+              <Th>{t("pii.fields.name")}</Th>
               <Th>{t("pii.fields.phone_number")}</Th>
               <Th>{t("pii.fields.date_of_birth")}</Th>
               <Th>{t("pii.fields.address")}</Th>
@@ -124,7 +125,7 @@ export function PhoneLookup() {
           }
         >
           {items.length === 0 ? (
-            <EmptyRow colSpan={6}>{t("pii.lookup.noMatches")}</EmptyRow>
+            <EmptyRow colSpan={7}>{t("pii.lookup.noMatches")}</EmptyRow>
           ) : (
             items.map((c) => (
               <tr key={c.id}>
@@ -132,6 +133,11 @@ export function PhoneLookup() {
                   <code>{c.id}</code>
                 </Td>
                 <Td>{c.state ? <StateBadge state={c.state} /> : "—"}</Td>
+                <Td>
+                  <span className="font-mono">
+                    {localizedName(c.personal_info.name, i18n.language) || "—"}
+                  </span>
+                </Td>
                 <Td>
                   <span className="font-mono">{c.personal_info.phone_number ?? "—"}</span>
                 </Td>

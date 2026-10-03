@@ -6,6 +6,7 @@
 #   ./dev logs [svc]  follow logs (all services, or one)
 #   ./dev seed EMAIL  create another super_admin (prints a one-time recovery link)
 #   ./dev seed-customers   demo customers with encrypted personal info (Node >= 22)
+#   ./dev migrate-names    move customer names from Kratos traits into encrypted personal info
 #   ./dev smoke       end-to-end smoke test (needs Node >= 22)
 #   ./dev mobile [android|ios]   run the Flutter app against the stack
 #   ./dev web         admin web with Vite hot reload instead of the container
@@ -59,6 +60,14 @@ seed() {
   fi
 }
 
+# Moves customer names out of the Kratos traits into the encrypted personal
+# info (idempotent; prints counts, never names). Returns the CLI's exit
+# status; names that were not moved stay in Kratos and the next run completes
+# the move. Flags: --dry-run, --strip-invalid.
+migrate_names() {
+  compose exec -T identity-service /identity-service pii migrate-kratos-names "$@"
+}
+
 # Demo customers with encrypted personal info, through the real flows.
 seed_customers() {
   if ! command -v node >/dev/null 2>&1; then
@@ -105,6 +114,8 @@ cmd_up() {
   compose up -d --build --wait
   say "creating the first super_admin"
   seed "$ADMIN_EMAIL"
+  say "moving customer names from Kratos into encrypted personal info"
+  migrate_names || say "warning: some customer names were not migrated; re-run ./dev migrate-names"
   say "seeding demo customers (skips the ones that exist)"
   seed_customers
   urls
@@ -163,8 +174,9 @@ case "${1:-up}" in
   seed) check_docker; seed "${2:?usage: ./dev seed EMAIL}" ;;
   smoke) need node "Node >= 22"; node "$ROOT/scripts/smoke.mjs" ;;
   seed-customers) need node "Node >= 22"; ensure_env; seed_customers ;;
+  migrate-names) check_docker; shift; migrate_names "$@" ;;
   mobile) shift; cmd_mobile "${1:-android}" ;;
   web) cmd_web ;;
-  -h | --help | help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' ;;
+  -h | --help | help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command: $1 (try ./dev help)" ;;
 esac

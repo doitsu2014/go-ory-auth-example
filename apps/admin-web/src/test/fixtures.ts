@@ -113,10 +113,12 @@ export function maskedPersonalInfo(
   overrides: Partial<MaskedPersonalInfo> = {},
 ): MaskedPersonalInfo {
   return {
+    name: { first: "A***", last: "N***" },
     phone_number: "+84*******567",
     date_of_birth: "1990-**-**",
     address: { city: "Ha Noi", country: "VN" },
     national_id: null,
+    has_name: true,
     has_phone_number: true,
     has_date_of_birth: true,
     has_address: true,
@@ -128,6 +130,7 @@ export function maskedPersonalInfo(
 
 export function personalInfo(overrides: Partial<PersonalInfo> = {}): PersonalInfo {
   return {
+    name: { first: "An", last: "Nguyễn" },
     phone_number: "+84901234567",
     date_of_birth: "1990-05-17",
     address: { line1: "12 Trang Tien", city: "Ha Noi", country: "VN" },

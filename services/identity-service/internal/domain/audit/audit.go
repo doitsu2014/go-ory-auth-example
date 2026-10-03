@@ -27,6 +27,13 @@ const (
 	ActionCustomerPIIErased   Action = "customer.pii.erased"
 	ActionCustomerPIIRevealed Action = "customer.pii.revealed"
 	ActionCustomerPIILookup   Action = "customer.pii.lookup"
+	// ActionCustomerPIINameMigrated: the operator CLI moved the name trait
+	// from Kratos into the encrypted personal info (system actor).
+	ActionCustomerPIINameMigrated Action = "customer.pii.name_migrated"
+	// ActionCustomerPIINameTraitRemoved: the name trait was removed from
+	// Kratos without storing it (details: fields, reason erased |
+	// already_migrated | empty | invalid; never the value).
+	ActionCustomerPIINameTraitRemoved Action = "customer.pii.name_trait_removed"
 	// Machine-to-machine service clients (details hold name and scopes,
 	// never the secret).
 	ActionServiceClientCreated       Action = "service_client.created"

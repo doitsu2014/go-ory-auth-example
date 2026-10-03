@@ -18,6 +18,7 @@ func TestMachineVisible(t *testing.T) {
 	}
 	hidden := []Action{
 		ActionCustomerPIIUpdated, ActionCustomerPIIErased, ActionCustomerPIIRevealed, ActionCustomerPIILookup,
+		ActionCustomerPIINameMigrated, ActionCustomerPIINameTraitRemoved,
 		"customer.pii.future", "customer.something_new", "admins.x", "service_clientx", "", "admin",
 	}
 	for _, a := range hidden {

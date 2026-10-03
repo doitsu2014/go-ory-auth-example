@@ -2,12 +2,12 @@
   "workflowVersion": "1.0.0",
   "engineVersion": "0.1.0",
   "activeIntent": {
-    "id": "261003-add-ory-hydra",
-    "label": "add-ory-hydra",
-    "description": "Add Ory Hydra for machine-to-machine (OAuth2 client_credentials) access to identity-service: Hydra in docker compose, JWT access tokens validated offline via JWKS, a scope-protected machine API plane, service-client management for super admins",
+    "id": "261003-move-customer-full",
+    "label": "move-customer-full",
+    "description": "Move customer full name out of Kratos traits into encrypted PII (customer_pii.full_name, mask/reveal/crypto-shred), migrate existing names out of Kratos, keep display_name as optional nickname and fix seeds",
     "scope": "feature",
     "space": "default",
-    "createdAt": "2026-10-03T09:22:39.516Z"
+    "createdAt": "2026-10-03T15:24:16.127Z"
   },
   "currentStage": "test-plan",
   "parked": true,
@@ -16,75 +16,75 @@
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T09:25:05.861Z"
+      "updatedAt": "2026-10-03T15:26:02.608Z"
     },
     "requirements-analysis": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T09:25:05.900Z"
+      "updatedAt": "2026-10-03T15:27:01.225Z"
     },
     "feasibility-assessment": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T09:25:05.941Z"
+      "updatedAt": "2026-10-03T15:27:01.264Z"
     },
     "architecture-design": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T09:27:12.421Z"
+      "updatedAt": "2026-10-03T15:27:56.424Z"
     },
     "api-contract": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T09:28:10.039Z"
+      "updatedAt": "2026-10-03T15:27:56.461Z"
     },
     "design-patterns": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T09:28:10.076Z"
+      "updatedAt": "2026-10-03T15:27:56.500Z"
     },
     "technical-spec": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T09:28:10.112Z"
+      "updatedAt": "2026-10-03T15:27:56.538Z"
     },
     "task-planning": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T09:28:42.179Z"
+      "updatedAt": "2026-10-03T15:28:34.381Z"
     },
     "code-generation": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T10:25:18.141Z"
+      "updatedAt": "2026-10-03T15:49:48.730Z"
     },
     "code-review": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T10:25:18.179Z"
+      "updatedAt": "2026-10-03T16:11:51.361Z"
     },
     "refactor": {
-      "status": "skipped",
+      "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T10:25:18.216Z"
+      "updatedAt": "2026-10-03T16:12:03.646Z"
     },
     "test-plan": {
       "status": "active",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T10:25:18.217Z"
+      "updatedAt": "2026-10-03T16:12:03.646Z"
     }
   },
-  "startedAt": "2026-10-03T09:22:39.517Z",
-  "updatedAt": "2026-10-03T10:25:18.253Z"
+  "startedAt": "2026-10-03T15:24:16.128Z",
+  "updatedAt": "2026-10-03T16:12:08.381Z"
 }

@@ -17,6 +17,7 @@ import 'package:mocktail/mocktail.dart';
 import '../../helpers/helpers.dart';
 
 PersonalInfo filled() => PersonalInfo(
+  name: const PersonName(first: 'Ánh', last: 'Nguyễn'),
   phoneNumber: '+84901234567',
   dateOfBirth: DateTime(1990, 5, 17),
   address: const Address(line1: '1 Le Loi', city: 'HCMC', country: 'VN'),
@@ -86,7 +87,7 @@ void main() {
       when(profile.getPersonalInfo)
           .thenAnswer((_) async => const PersonalInfo());
       await pump(tester);
-      expect(find.text('Not provided'), findsNWidgets(4));
+      expect(find.text('Not provided'), findsNWidgets(5));
     });
 
     testWidgets('503 dependency_unavailable -> banner with retry', (
@@ -115,6 +116,85 @@ void main() {
   });
 
   group('edit', () {
+    testWidgets('name fields come first; name round-trips (NAME-FR-09)', (
+      tester,
+    ) async {
+      var stored = const PersonalInfo();
+      when(profile.getPersonalInfo).thenAnswer((_) async => stored);
+      when(() => profile.putPersonalInfo(any())).thenAnswer((inv) async {
+        // Simulate the server round trip through the wire JSON.
+        final body = inv.positionalArguments.single as PersonalInfo;
+        return stored = PersonalInfo.fromJson(body.toJson());
+      });
+      await pump(tester);
+      expect(
+        tester
+            .widget<Text>(find.byKey(const Key('personalInfo.view.name')))
+            .data,
+        'Not provided',
+      );
+      await openEditor(tester);
+      final firstY = tester.getTopLeft(field(PiiField.firstName)).dy;
+      final lastY = tester.getTopLeft(field(PiiField.lastName)).dy;
+      final phoneY = tester.getTopLeft(field(PiiField.phoneNumber)).dy;
+      expect(firstY, lessThan(lastY));
+      expect(lastY, lessThan(phoneY));
+
+      await tester.enterText(field(PiiField.firstName), ' Thị Ngọc Ánh ');
+      await tester.enterText(field(PiiField.lastName), 'Nguyễn ');
+      await save(tester);
+      expect(sent().toJson()['name'], {
+        'first': 'Thị Ngọc Ánh',
+        'last': 'Nguyễn',
+      });
+      expect(
+        tester
+            .widget<Text>(find.byKey(const Key('personalInfo.view.name')))
+            .data,
+        'Thị Ngọc Ánh Nguyễn',
+      );
+
+      // Re-opening starts from the stored name; clearing both sends null.
+      await openEditor(tester);
+      expect(
+        tester
+            .widget<TextField>(
+              find.descendant(
+                of: field(PiiField.firstName),
+                matching: find.byType(TextField),
+                matchRoot: true,
+              ),
+            )
+            .controller!
+            .text,
+        'Thị Ngọc Ánh',
+      );
+      await tester.enterText(field(PiiField.firstName), '');
+      await tester.enterText(field(PiiField.lastName), ' ');
+      await save(tester);
+      final second =
+          verify(() => profile.putPersonalInfo(captureAny())).captured.single
+              as PersonalInfo;
+      expect(second.toJson()['name'], isNull);
+    });
+
+    testWidgets('name: C1 control / Cf format characters blocked client-side', (
+      tester,
+    ) async {
+      when(profile.getPersonalInfo)
+          .thenAnswer((_) async => const PersonalInfo());
+      await pump(tester);
+      await openEditor(tester);
+      await tester.enterText(field(PiiField.firstName), 'An\u0085h');
+      await tester.enterText(field(PiiField.lastName), 'Ng\u202Euyen');
+      await save(tester);
+      expect(
+        find.text('Contains characters that are not allowed.'),
+        findsNWidgets(2),
+      );
+      verifyNever(() => profile.putPersonalInfo(any()));
+    });
+
     testWidgets('client validation blocks the request', (tester) async {
       when(profile.getPersonalInfo)
           .thenAnswer((_) async => const PersonalInfo());
@@ -151,6 +231,7 @@ void main() {
       await save(tester);
 
       expect(sent().toJson(), {
+        'name': null,
         'phone_number': '+84901234567',
         'date_of_birth': null,
         'address': {'line1': '1 Le Loi', 'city': 'HCMC', 'country': 'VN'},
@@ -198,6 +279,7 @@ void main() {
       await tester.pump();
       await save(tester);
       expect(sent().toJson(), {
+        'name': {'first': 'Ánh', 'last': 'Nguyễn'},
         'phone_number': '+84901234567',
         'date_of_birth': null,
         'address': {'line1': '1 Le Loi', 'city': 'HCMC', 'country': 'VN'},
@@ -212,6 +294,7 @@ void main() {
           'validation_failed',
           status: 422,
           fieldErrors: [
+            FieldError(field: 'name.last', code: 'invalid_characters'),
             FieldError(field: 'address.country', code: 'invalid_format'),
             FieldError(field: 'national_id.number', code: 'too_long'),
             FieldError(field: 'date_of_birth', code: 'out_of_range'),
@@ -237,6 +320,11 @@ void main() {
         deco(PiiField.dateOfBirth).errorText,
         'You must be between 13 and 120 years old.',
       );
+      expect(
+        deco(PiiField.lastName).errorText,
+        'Contains characters that are not allowed.',
+      );
+      expect(deco(PiiField.firstName).errorText, isNull);
       expect(deco(PiiField.phoneNumber).errorText, isNull);
     });
 
@@ -316,7 +404,7 @@ void main() {
       await tester.pumpAndSettle();
       verify(profile.erasePersonalInfo).called(1);
       expect(find.text('Personal information erased.'), findsOneWidget);
-      expect(find.text('Not provided'), findsNWidgets(4));
+      expect(find.text('Not provided'), findsNWidgets(5));
     });
 
     testWidgets('erase failure -> banner, data kept', (tester) async {

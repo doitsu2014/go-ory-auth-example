@@ -67,7 +67,6 @@ Authorization: Bearer ory_st_Ab12…
   "id": "5d9c2c61-6a1e-4b8f-9b8a-2f9d6f0c1e11",
   "email": "an.nguyen@example.com",
   "email_verified": true,
-  "name": { "first": "An", "last": "Nguyen" },
   "display_name": "An",
   "avatar_url": null,
   "locale": "vi-VN",
@@ -75,9 +74,11 @@ Authorization: Bearer ory_st_Ab12…
 }
 ```
 
-`email`, `email_verified`, `name` come from the Kratos session; the rest from
-`profile`. Changing email/name/password goes through the Kratos **settings
-flow**, not this API.
+`email`, `email_verified` come from the Kratos session; the rest from
+`profile`. `name` is deprecated and never returned: the customer's real name is
+encrypted personal info (`GET/PUT /v1/me/personal-info`, field `name`), and
+`display_name` is only an optional nickname. Changing email/password goes
+through the Kratos **settings flow**, not this API.
 
 ## `PATCH /v1/me`
 

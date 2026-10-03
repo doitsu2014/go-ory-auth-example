@@ -98,10 +98,6 @@ class _ProfileBody extends ConsumerWidget {
             ),
           ),
         ListTile(
-          title: Text('${l10n.firstName} / ${l10n.lastName}'),
-          subtitle: Text(me.name?.full ?? '-'),
-        ),
-        ListTile(
           title: Text(l10n.displayName),
           subtitle: Text(
             me.displayName ?? '-',

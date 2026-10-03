@@ -2,7 +2,11 @@
 // Seeds demo customers through the real flows, so their personal information
 // is encrypted exactly as for a real user:
 //   Kratos native registration -> email verification (code from Mailpit)
-//   -> native login -> PATCH /v1/me (display name) -> PUT /v1/me/personal-info
+//   -> native login -> PATCH /v1/me (nickname) -> PUT /v1/me/personal-info
+//
+// The real name is personal information: it is stored encrypted through
+// PUT /v1/me/personal-info, never as a Kratos trait (the customer schema
+// holds the email only), and display_name is a nickname, not the name.
 //
 //   node scripts/seed-customers.mjs        (or: ./dev seed-customers)
 //
@@ -89,7 +93,7 @@ async function seedOne(c, i) {
   // Kratos answers 500 when its HaveIBeenPwned lookup times out; retry a few times.
   let reg;
   for (let attempt = 0; attempt < 3; attempt++) {
-    reg = await kratosSubmit("registration", { method: "password", password: PASSWORD, traits: { email, name: { first: c.first, last: c.last } } });
+    reg = await kratosSubmit("registration", { method: "password", password: PASSWORD, traits: { email } });
     if (reg.status < 500) break;
     await new Promise((r) => setTimeout(r, 2000));
   }
@@ -111,14 +115,16 @@ async function seedOne(c, i) {
   const login = await kratosSubmit("login", { method: "password", identifier: email, password: PASSWORD });
   const token = login.body.session_token;
   if (!token) throw new Error(`login failed for ${email}: ${login.status}`);
-  await call("PATCH", "/v1/me", token, { display_name: `${c.last} ${c.first}` });
+  const nickname = `Khách hàng ${String(i + 1).padStart(2, "0")}`;
+  await call("PATCH", "/v1/me", token, { display_name: nickname });
   await call("PUT", "/v1/me/personal-info", token, {
+    name: { first: c.first, last: c.last },
     phone_number: c.phone,
     date_of_birth: c.dob,
     address: { line1: c.line1, city: c.city, country: "VN" },
     national_id: { type: "cccd", number: c.nid },
   });
-  console.log(`ok    ${email}  ${c.last} ${c.first}  ${c.phone}`);
+  console.log(`ok    ${email}  ${nickname}`); // personal info is never printed
   return "created";
 }
 

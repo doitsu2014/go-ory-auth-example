@@ -1,19 +1,25 @@
 # 8. Personal data (PII) protection
 
-Customer personal information (phone number, date of birth, postal address,
-national ID) is encrypted at the application layer before it reaches
+Customer personal information (name, phone number, date of birth, postal
+address, national ID) is encrypted at the application layer before it reaches
 PostgreSQL. Decision record: [ADR-0011](../adr/0011-envelope-encryption-for-pii.md).
 
 ## 8.1 Classification
 
 | Field | Class | At rest | Search |
 | --- | --- | --- | --- |
+| `name` {first, last} | confidential | AES-256-GCM (JSON) | — |
 | `phone_number` (E.164) | confidential | AES-256-GCM | HMAC-SHA256 blind index (equality) |
 | `date_of_birth` | confidential | AES-256-GCM | — |
 | `address` | confidential | AES-256-GCM (JSON) | — |
 | `national_id` {type, number} | restricted | AES-256-GCM (JSON) | — |
-| `display_name`, `avatar_url`, `locale` | internal | plaintext | — |
-| Kratos traits (email, name) | confidential | Kratos DB, plaintext (Kratos needs the login identifier) — protected by volume encryption and least privilege | Kratos |
+| `display_name`, `avatar_url`, `locale` | internal | plaintext — `display_name` is an optional nickname, never the real name | — |
+| Kratos trait `email` | confidential | Kratos DB, plaintext: Kratos needs it for login lookup and to send verification/recovery mail. Controls in §8.10 | Kratos |
+
+The Kratos `customer` schema holds **only** `email`. The customer's name is not
+a Kratos trait (registration with `traits.name` is rejected); it is written
+through `PUT /v1/me/personal-info` after email verification. Admin names stay
+in the `admin` schema (employee data).
 
 ## 8.2 Envelope encryption
 
@@ -68,7 +74,8 @@ and decrypts the other fields only for exact matches. The limiter charges one
 unit per candidate. Masked reads are limited to 300/min per actor and are not
 audited (they reveal no full values).
 
-Masking (domain layer, fixed width so length doesn't leak): phone `+84*******567`,
+Masking (domain layer, fixed width so length doesn't leak): name: first character of
+each part + `***` (`{first: "A***", last: "N***"}`), phone `+84*******567`,
 date of birth `1990-**-**`, address city + country only, national ID `******123`
 (last 3 only when ≥ 9 characters).
 
@@ -163,3 +170,60 @@ Phone number, date of birth, address and ID number are *basic* personal data
 under Decree 13 Art. 2. Vietnam's Personal Data Protection Law No.
 91/2025/QH15 (effective 2026-01-01) supersedes much of Decree 13. Confirm the
 current article numbers with counsel before relying on this table.
+
+## 8.10 Plaintext that remains outside `customer_pii`
+
+| Where | What | Controls |
+| --- | --- | --- |
+| Kratos DB: `identities.traits`, `identity_credential_identifiers`, `identity_verifiable_addresses`, `identity_recovery_addresses` | customer email | Own database and role per component (no other service reads Kratos tables); KMS-encrypted volumes and backups in production; least-privilege DB access; admin API on a private network only |
+| Kratos DB: courier messages | email bodies (codes, links) | `kratos cleanup sql` scheduled to prune old flows and messages; same volume/backup encryption |
+| Kratos DB: sessions | IP address, user agent | Same as above; session lifespan limits retention |
+
+Accepted risk with owner: [06-security §6.7](06-security.md#67-accepted-risks-v1).
+
+## 8.11 Migrating names out of Kratos
+
+Existing customers created before this change still carry `traits.name`.
+`identity-service pii migrate-kratos-names [--dry-run]` (run by `./dev up`
+locally) pages through customer identities and, per identity:
+
+1. customer has a `customer.pii.erased` audit event → only remove the trait
+   (earlier erasure requests win);
+2. personal info already has a name → only remove the trait;
+3. otherwise seal the name under the customer's DEK and, in one transaction,
+   append audit `customer.pii.name_migrated` (field names only) and store
+   `name_ct`; after COMMIT re-read the identity, and only if `traits.name` still
+   equals the value that was encrypted, remove it with a JSON Patch `remove`
+   (Kratos v26.2.0 rejects the `test` op, so this is read-compare-remove; a
+   change in between yields a conflict and keeps the name).
+
+An empty `traits.name: {}` is removed without storing anything. A name that
+fails validation stays in Kratos and is counted as `failed`; `--strip-invalid`
+removes such names without storing them. Every strip-only removal is audited
+as `customer.pii.name_trait_removed` with a reason. The store transaction
+re-checks the erasure ledger, so an erase that lands mid-run wins. A customer
+who erases personal info while a legacy name is still in Kratos gets a
+`customer.pii.erased` event and the trait removed, even without a record. If removing
+the trait fails, the erase returns 503 `dependency_unavailable` (the key is
+already shredded) so the client retries.
+
+Name parts reject control characters and Unicode format characters (category
+Cf: zero-width, bidi overrides/isolates, BOM, soft hyphen); a part made only of
+whitespace or Cf characters counts as empty.
+
+The trait is never removed before the encrypted copy is committed, so a crash
+between the two steps leaves the name in Kratos and a re-run finishes it.
+
+Production rollout order: DB migration `0005` → identity-service → Kratos with
+the new `customer` schema → run the CLI. Between the last two steps, identities
+still carrying `name` can sign in, but a settings update fails schema
+validation until they are migrated, so run the CLI right after the Kratos rollout.
+The same validation blocks **admin disable** (state change) of an unmigrated
+identity: to block such an account urgently, run the CLI first (with
+`--strip-invalid` if its name is invalid), then disable.
+
+`PUT /v1/me/personal-info` replaces the whole record, so a client build that
+does not know the `name` field clears a migrated name when it saves. Ship the
+clients that send `name` (and enforce a minimum app version) **before** running
+the CLI in production.
+

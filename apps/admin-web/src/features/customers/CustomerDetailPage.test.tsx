@@ -30,6 +30,28 @@ function setup(disableStatus = 200) {
   return { disableBodies };
 }
 
+describe("CustomerDetailPage details", () => {
+  it("does not show a Kratos name, even if the API still sent one (NAME-FR-07)", async () => {
+    server.use(
+      http.get(`${API}/admin/v1/me`, () => HttpResponse.json(adminMe())),
+      http.get(`${API}/admin/v1/customers/:id`, () =>
+        HttpResponse.json({ ...C, name: { first: "Legacy", last: "Kratos" } }),
+      ),
+      http.get(`${API}/admin/v1/customers/:id/personal-info`, () =>
+        HttpResponse.json(maskedPersonalInfo()),
+      ),
+    );
+    renderApp(`/customers/${C.id}`);
+    expect(await screen.findByRole("heading", { name: C.email })).toBeInTheDocument();
+    expect(screen.getByText(C.display_name ?? "")).toBeInTheDocument();
+    expect(screen.getByText("Display name (nickname)")).toBeInTheDocument();
+    expect(screen.queryByText(/Legacy|Kratos/)).toBeNull();
+    expect(screen.queryByText("Name")).toBeNull();
+    // The real name only appears masked, inside the personal-info card.
+    expect(await screen.findByText("A*** N***")).toBeInTheDocument();
+  });
+});
+
 describe("CustomerDetailPage disable", () => {
   it("requires confirmation with a reason, then disables and refreshes", async () => {
     const { disableBodies } = setup();

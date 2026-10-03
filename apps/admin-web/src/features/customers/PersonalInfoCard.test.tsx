@@ -13,6 +13,7 @@ import { REVEAL_TTL_MS } from "./PersonalInfoCard";
 const C = customer(7);
 const PLAIN_PHONE = "+84901234567";
 const PLAIN_LINE1 = "12 Trang Tien";
+const PLAIN_LAST = "Nguyễn";
 
 const BASE: Permission[] = ["view_customers", "manage_customers", "view_audit"];
 
@@ -88,6 +89,44 @@ describe("PersonalInfoCard masked view", () => {
     expect(screen.queryByText("Hidden")).toBeNull();
   });
 
+  it("shows the masked name first, given name first in English", async () => {
+    setup({ permissions: BASE });
+    renderApp(`/customers/${C.id}`);
+    expect(await screen.findByText("A*** N***")).toBeInTheDocument();
+    const terms = screen.getAllByRole("term").map((el) => el.textContent);
+    // First row of the personal-info card, right after the account details.
+    expect(terms.slice(terms.indexOf("Full name"), terms.indexOf("Full name") + 2)).toEqual([
+      "Full name",
+      "Phone number",
+    ]);
+  });
+
+  it("orders the masked name family name first in Vietnamese", async () => {
+    setup({ permissions: BASE });
+    renderApp(`/customers/${C.id}`);
+    await screen.findByText("A*** N***");
+    const { default: i18n } = await import("../../i18n");
+    await act(() => i18n.changeLanguage("vi"));
+    expect(screen.getByText("N*** A***")).toBeInTheDocument();
+    expect(screen.getByText("Họ và tên")).toBeInTheDocument();
+  });
+
+  it("says 'Not provided' for the name when has_name is false", async () => {
+    setup({ permissions: BASE });
+    server.use(
+      http.get(`${API}/admin/v1/customers/:id/personal-info`, () =>
+        HttpResponse.json(
+          maskedPersonalInfo({ has_name: false, name: null, has_national_id: false }),
+        ),
+      ),
+    );
+    renderApp(`/customers/${C.id}`);
+    await screen.findByText("+84*******567");
+    expect(screen.queryByText("A*** N***")).toBeNull();
+    // Name and national ID are both not provided.
+    expect(screen.getAllByText("Not provided")).toHaveLength(2);
+  });
+
   it("says 'Hidden' when a value exists but the masked form is withheld", async () => {
     setup({ permissions: BASE });
     server.use(
@@ -127,6 +166,45 @@ describe("PersonalInfoCard masked view", () => {
 });
 
 describe("PersonalInfoCard reveal", () => {
+  it("can reveal only the name, shown in the locale's order", async () => {
+    const { revealBodies } = setup();
+    const user = userEvent.setup();
+    const { queryClient } = renderApp(`/customers/${C.id}`);
+    const dialog = await openReveal(user);
+    await user.selectOptions(within(dialog).getByLabelText("Reason"), "identity_verification");
+    await user.click(within(dialog).getByLabelText("Full name"));
+    await user.click(within(dialog).getByRole("button", { name: "Reveal" }));
+
+    await waitFor(() =>
+      expect(revealBodies).toEqual([{ reason_code: "identity_verification", fields: ["name"] }]),
+    );
+    expect(await screen.findByTestId("pii-revealed-name")).toHaveTextContent("An Nguyễn");
+    // Not requested → still masked.
+    expect(screen.getByText("+84*******567")).toBeInTheDocument();
+    expect(screen.queryByText(PLAIN_PHONE)).toBeNull();
+
+    const { default: i18n } = await import("../../i18n");
+    await act(() => i18n.changeLanguage("vi"));
+    expect(screen.getByTestId("pii-revealed-name")).toHaveTextContent("Nguyễn An");
+
+    expect(cacheDump(queryClient)).not.toContain(PLAIN_LAST);
+    expect(storageDump()).not.toContain(PLAIN_LAST);
+  });
+
+  it("offers the name only when the customer has provided it", async () => {
+    setup();
+    server.use(
+      http.get(`${API}/admin/v1/customers/:id/personal-info`, () =>
+        HttpResponse.json(maskedPersonalInfo({ has_name: false, name: null })),
+      ),
+    );
+    const user = userEvent.setup();
+    renderApp(`/customers/${C.id}`);
+    const dialog = await openReveal(user);
+    expect(within(dialog).queryByLabelText("Full name")).toBeNull();
+    expect(within(dialog).getByLabelText("Phone number")).toBeInTheDocument();
+  });
+
   it("requires a reason code, validates the ticket ref and sends the selected fields", async () => {
     const { revealBodies } = setup();
     const user = userEvent.setup();
@@ -189,6 +267,7 @@ describe("PersonalInfoCard reveal", () => {
     );
     expect(await screen.findByText(PLAIN_PHONE)).toBeInTheDocument();
     expect(screen.getByText("1990-05-17")).toBeInTheDocument();
+    expect(screen.getByText("An Nguyễn")).toBeInTheDocument();
   });
 
   it("hides revealed values automatically after 60 seconds", async () => {

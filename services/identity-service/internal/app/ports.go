@@ -108,6 +108,16 @@ type IdentityAdmin interface {
 	CreateRecoveryCode(ctx context.Context, id uuid.UUID, ttl time.Duration) (RecoveryCode, error)
 }
 
+// NameTraitAdmin removes the legacy name trait from a Kratos identity
+// (customer name migration, NAME-FR-08).
+type NameTraitAdmin interface {
+	ListIdentities(ctx context.Context, q IdentityQuery) (items []identity.Identity, nextPageToken string, err error)
+	// RemoveTraitName removes traits.name only while it still equals old.
+	// nil when the identity has no name trait;
+	// ErrConflict when the name changed; ErrNotFound when the identity is gone.
+	RemoveTraitName(ctx context.Context, id uuid.UUID, old identity.Name) error
+}
+
 // Authorizer checks Keto permissions on Console:main for a User subject.
 type Authorizer interface {
 	Check(ctx context.Context, subject uuid.UUID, perm identity.Permission) (bool, error)
@@ -244,6 +254,7 @@ type SubjectKeyRepo interface {
 type EncryptedPII struct {
 	IdentityID  uuid.UUID
 	KeyID       uuid.UUID
+	Name        []byte
 	Phone       []byte
 	PhoneBidx   *BlindIndex
 	DateOfBirth []byte
@@ -262,6 +273,11 @@ type CustomerPIIRepo interface {
 	Upsert(ctx context.Context, rec EncryptedPII) (time.Time, error)
 	// FindByPhoneBidx returns at most limit records with the blind index.
 	FindByPhoneBidx(ctx context.Context, bidx BlindIndex, limit int) ([]EncryptedPII, error)
+	// SetName stores nameCT (sealed under keyID) without touching the other
+	// columns: it inserts the record when there is none, else fills the name
+	// only when the record is under keyID and has no name yet. set=false
+	// otherwise. ErrConflict if keyID is not the subject's current key.
+	SetName(ctx context.Context, identityID, keyID uuid.UUID, nameCT []byte) (set bool, err error)
 }
 
 // Repos is the set of repositories available inside a transaction.

@@ -126,6 +126,9 @@ func nullPtr(n nullable.Nullable[string]) *string {
 
 func fromPersonalInfo(b gen.PersonalInfo) pii.PersonalInfo {
 	var p pii.PersonalInfo
+	if v, err := b.Name.Get(); err == nil {
+		p.Name = &pii.Name{First: deref(v.First), Last: deref(v.Last)}
+	}
 	if v, err := b.PhoneNumber.Get(); err == nil {
 		p.Phone = &v
 	}
@@ -156,11 +159,15 @@ func nullableTime(t *time.Time) nullable.Nullable[time.Time] {
 func toPersonalInfo(v app.PersonalInfoView) gen.PersonalInfo {
 	p := v.Info
 	out := gen.PersonalInfo{
+		Name:        nullable.NewNullNullable[gen.PersonName](),
 		PhoneNumber: nullableOf(p.Phone),
 		DateOfBirth: nullable.NewNullNullable[openapi_types.Date](),
 		Address:     nullable.NewNullNullable[gen.Address](),
 		NationalId:  nullable.NewNullNullable[gen.NationalId](),
 		UpdatedAt:   nullableTime(v.UpdatedAt),
+	}
+	if n := p.Name; n != nil {
+		out.Name.Set(gen.PersonName{First: nonEmpty(n.First), Last: nonEmpty(n.Last)})
 	}
 	if d := p.DateOfBirth; d != nil {
 		out.DateOfBirth.Set(openapi_types.Date{Time: d.Time()})
@@ -181,11 +188,18 @@ func toMasked(v app.MaskedPersonalInfoView) gen.MaskedPersonalInfo {
 	m := v.Masked
 	out := gen.MaskedPersonalInfo{
 		PhoneNumber: nullableOf(m.Phone), DateOfBirth: nullableOf(m.DateOfBirth),
-		HasPhoneNumber: m.Phone != nil, HasDateOfBirth: m.DateOfBirth != nil,
+		HasName: m.Name != nil, HasPhoneNumber: m.Phone != nil, HasDateOfBirth: m.DateOfBirth != nil,
 		HasAddress: m.Address != nil, HasNationalId: m.NationalID != nil,
 		UpdatedAt: nullableTime(v.UpdatedAt),
 	}
-	// The address and national id schemas are inline (anonymous) types.
+	// The name, address and national id schemas are inline (anonymous) types.
+	name, _ := out.Name.Get()
+	if n := m.Name; n != nil {
+		name.First, name.Last = nullableOf(n.First), nullableOf(n.Last)
+		out.Name.Set(name)
+	} else {
+		out.Name.SetNull()
+	}
 	addr, _ := out.Address.Get()
 	if a := m.Address; a != nil {
 		city, country := a.City, a.Country
@@ -203,4 +217,11 @@ func toMasked(v app.MaskedPersonalInfoView) gen.MaskedPersonalInfo {
 		out.NationalId.SetNull()
 	}
 	return out
+}
+
+func nonEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }

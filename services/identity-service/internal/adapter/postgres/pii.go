@@ -120,7 +120,7 @@ type CustomerPIIRepo struct{ q *sqlcgen.Queries }
 
 func toEncryptedPII(r sqlcgen.CustomerPii) app.EncryptedPII {
 	rec := app.EncryptedPII{
-		IdentityID: r.IdentityID, KeyID: r.KeyID, Phone: r.PhoneCt, DateOfBirth: r.DobCt,
+		IdentityID: r.IdentityID, KeyID: r.KeyID, Name: r.NameCt, Phone: r.PhoneCt, DateOfBirth: r.DobCt,
 		Address: r.AddressCt, NationalID: r.NationalIDCt, UpdatedAt: r.UpdatedAt,
 	}
 	if r.PhoneBidx != nil && r.BidxKeyVersion != nil {
@@ -145,7 +145,7 @@ func (r CustomerPIIRepo) Get(ctx context.Context, identityID uuid.UUID) (app.Enc
 func (r CustomerPIIRepo) Upsert(ctx context.Context, rec app.EncryptedPII) (time.Time, error) {
 	p := sqlcgen.UpsertCustomerPIIParams{
 		IdentityID: rec.IdentityID, KeyID: rec.KeyID, PhoneCt: rec.Phone, DobCt: rec.DateOfBirth,
-		AddressCt: rec.Address, NationalIDCt: rec.NationalID,
+		AddressCt: rec.Address, NationalIDCt: rec.NationalID, NameCt: rec.Name,
 	}
 	if rec.PhoneBidx != nil {
 		v := int32(rec.PhoneBidx.KeyVersion)
@@ -172,4 +172,13 @@ func (r CustomerPIIRepo) FindByPhoneBidx(ctx context.Context, bidx app.BlindInde
 		out[i] = toEncryptedPII(row)
 	}
 	return out, nil
+}
+
+// SetName implements app.CustomerPIIRepo.
+func (r CustomerPIIRepo) SetName(ctx context.Context, identityID, keyID uuid.UUID, nameCT []byte) (bool, error) {
+	n, err := r.q.SetCustomerPIIName(ctx, sqlcgen.SetCustomerPIINameParams{IdentityID: identityID, KeyID: keyID, NameCt: nameCT})
+	if err != nil {
+		return false, piiErr("set personal info name", err)
+	}
+	return n == 1, nil
 }

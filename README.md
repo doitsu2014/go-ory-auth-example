@@ -22,11 +22,13 @@ This one command:
 3. waits until every service is healthy;
 4. creates the first `super_admin` (`admin@example.local`, override with
    `ADMIN_EMAIL=...`) and prints a one-time recovery link;
-5. seeds 5 demo customers (`customer01..05@example.local`, password
-   `SEED_CUSTOMER_PASSWORD` in `.env`) with encrypted phone, date of birth,
-   address and national id, through the real registration flow (needs Node >= 22;
+5. moves customer names that are still in Kratos into encrypted personal
+   info (`pii migrate-kratos-names`, idempotent);
+6. seeds 5 demo customers (`customer01..05@example.local`, password
+   `SEED_CUSTOMER_PASSWORD` in `.env`) with encrypted name, phone, date of
+   birth, address and national id, through the real registration flow (needs Node >= 22;
    skipped with a hint otherwise);
-6. prints the URLs.
+7. prints the URLs.
 
 Then open the recovery link, set a password and enrol TOTP (MFA is mandatory
 for admins). All emails land in Mailpit at http://localhost:8025.

@@ -60,7 +60,7 @@ func (q *Queries) DeleteSubjectKey(ctx context.Context, identityID uuid.UUID) ([
 }
 
 const findCustomerPIIByPhoneBidx = `-- name: FindCustomerPIIByPhoneBidx :many
-SELECT identity_id, key_id, phone_ct, phone_bidx, bidx_key_version, dob_ct, address_ct, national_id_ct, updated_at
+SELECT identity_id, key_id, phone_ct, phone_bidx, bidx_key_version, dob_ct, address_ct, national_id_ct, updated_at, name_ct
 FROM customer_pii
 WHERE phone_bidx = $1 AND bidx_key_version = $2
 ORDER BY identity_id
@@ -92,6 +92,7 @@ func (q *Queries) FindCustomerPIIByPhoneBidx(ctx context.Context, arg FindCustom
 			&i.AddressCt,
 			&i.NationalIDCt,
 			&i.UpdatedAt,
+			&i.NameCt,
 		); err != nil {
 			return nil, err
 		}
@@ -104,7 +105,7 @@ func (q *Queries) FindCustomerPIIByPhoneBidx(ctx context.Context, arg FindCustom
 }
 
 const getCustomerPII = `-- name: GetCustomerPII :one
-SELECT identity_id, key_id, phone_ct, phone_bidx, bidx_key_version, dob_ct, address_ct, national_id_ct, updated_at
+SELECT identity_id, key_id, phone_ct, phone_bidx, bidx_key_version, dob_ct, address_ct, national_id_ct, updated_at, name_ct
 FROM customer_pii
 WHERE identity_id = $1
 `
@@ -122,6 +123,7 @@ func (q *Queries) GetCustomerPII(ctx context.Context, identityID uuid.UUID) (Cus
 		&i.AddressCt,
 		&i.NationalIDCt,
 		&i.UpdatedAt,
+		&i.NameCt,
 	)
 	return i, err
 }
@@ -225,6 +227,32 @@ func (q *Queries) ListSubjectKeysForRewrap(ctx context.Context, arg ListSubjectK
 	return items, nil
 }
 
+const setCustomerPIIName = `-- name: SetCustomerPIIName :execrows
+INSERT INTO customer_pii (identity_id, key_id, name_ct, updated_at)
+VALUES ($1, $2, $3, now())
+ON CONFLICT (identity_id) DO UPDATE
+SET name_ct = EXCLUDED.name_ct, updated_at = now()
+WHERE customer_pii.key_id = EXCLUDED.key_id AND customer_pii.name_ct IS NULL
+`
+
+type SetCustomerPIINameParams struct {
+	IdentityID uuid.UUID
+	KeyID      uuid.UUID
+	NameCt     []byte
+}
+
+// Migration of a Kratos name trait (technical spec §1): adds name_ct without
+// touching the other columns. Inserts the record when there is none; else
+// fills name_ct only when the record is under the given key and has no name
+// yet. 0 rows = the record already has a name or is under another key.
+func (q *Queries) SetCustomerPIIName(ctx context.Context, arg SetCustomerPIINameParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setCustomerPIIName, arg.IdentityID, arg.KeyID, arg.NameCt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const updateWrappedDEK = `-- name: UpdateWrappedDEK :execrows
 UPDATE subject_key
 SET wrapped_dek = $1, kek_name = $2, kek_version = $3, rewrapped_at = now()
@@ -255,9 +283,9 @@ func (q *Queries) UpdateWrappedDEK(ctx context.Context, arg UpdateWrappedDEKPara
 }
 
 const upsertCustomerPII = `-- name: UpsertCustomerPII :one
-INSERT INTO customer_pii (identity_id, key_id, phone_ct, phone_bidx, bidx_key_version, dob_ct, address_ct, national_id_ct, updated_at)
+INSERT INTO customer_pii (identity_id, key_id, phone_ct, phone_bidx, bidx_key_version, dob_ct, address_ct, national_id_ct, name_ct, updated_at)
 VALUES ($1, $2, $3, $4, $5,
-        $6, $7, $8, now())
+        $6, $7, $8, $9, now())
 ON CONFLICT (identity_id) DO UPDATE
 SET key_id           = EXCLUDED.key_id,
     phone_ct         = EXCLUDED.phone_ct,
@@ -266,6 +294,7 @@ SET key_id           = EXCLUDED.key_id,
     dob_ct           = EXCLUDED.dob_ct,
     address_ct       = EXCLUDED.address_ct,
     national_id_ct   = EXCLUDED.national_id_ct,
+    name_ct          = EXCLUDED.name_ct,
     updated_at       = now()
 RETURNING updated_at
 `
@@ -279,6 +308,7 @@ type UpsertCustomerPIIParams struct {
 	DobCt          []byte
 	AddressCt      []byte
 	NationalIDCt   []byte
+	NameCt         []byte
 }
 
 func (q *Queries) UpsertCustomerPII(ctx context.Context, arg UpsertCustomerPIIParams) (time.Time, error) {
@@ -291,6 +321,7 @@ func (q *Queries) UpsertCustomerPII(ctx context.Context, arg UpsertCustomerPIIPa
 		arg.DobCt,
 		arg.AddressCt,
 		arg.NationalIDCt,
+		arg.NameCt,
 	)
 	var updated_at time.Time
 	err := row.Scan(&updated_at)

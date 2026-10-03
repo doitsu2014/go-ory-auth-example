@@ -78,8 +78,7 @@ export const vi: Resources = {
     detailTitle: "Khách hàng",
     id: "ID",
     email: "Email",
-    name: "Họ tên",
-    displayName: "Tên hiển thị",
+    displayName: "Tên hiển thị (biệt danh)",
     state: "Trạng thái",
     emailVerified: "Email đã xác minh",
     created: "Ngày tạo",
@@ -206,6 +205,7 @@ export const vi: Resources = {
     notProvided: "Chưa cung cấp",
     hidden: "Đã ẩn",
     fields: {
+      name: "Họ và tên",
       phone_number: "Số điện thoại",
       date_of_birth: "Ngày sinh",
       address: "Địa chỉ",

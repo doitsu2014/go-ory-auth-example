@@ -33,6 +33,7 @@ type CustomerPii struct {
 	AddressCt      []byte
 	NationalIDCt   []byte
 	UpdatedAt      time.Time
+	NameCt         []byte
 }
 
 type IdempotencyKey struct {

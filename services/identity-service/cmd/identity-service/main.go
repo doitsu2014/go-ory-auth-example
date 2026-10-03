@@ -1,6 +1,6 @@
 // Command identity-service is the go-ory-auth-example domain service around
 // identity: serve | migrate up | admin bootstrap | clients create |
-// keys rewrap | pii reapply-erasures | healthcheck.
+// keys rewrap | pii reapply-erasures | pii migrate-kratos-names | healthcheck.
 package main
 
 import (
@@ -198,7 +198,7 @@ func serve(ctx context.Context, cfg platform.Config, log *slog.Logger) error {
 		Audit: &app.AuditService{Authz: authz, Audit: repos.Audit},
 		PersonalInfo: &app.PersonalInfoService{
 			Authz: authz, Identities: kadmin, Keys: keys, Cache: dekCache, Tx: store,
-			SubjectKeys: repos.SubjectKeys, Records: repos.PersonalInfo, Clock: clock, Log: log,
+			SubjectKeys: repos.SubjectKeys, Records: repos.PersonalInfo, Clock: clock, Log: log, NameTraits: kadmin,
 			LookupLimiter: app.NewRateLimiter(app.LookupRateRules, nil),
 			RevealLimiter: app.NewRateLimiter(app.RevealRateRules, nil),
 			MaskedLimiter: app.NewRateLimiter(app.MaskedRateRules, nil),
@@ -415,7 +415,60 @@ func piiCmd(stdout, stderr io.Writer) *cobra.Command {
 			return nil
 		},
 	})
+	var dryRun, stripInvalid bool
+	migrateNames := &cobra.Command{
+		Use:   "migrate-kratos-names",
+		Short: "Move customer names from Kratos traits into the encrypted personal info (idempotent)",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfg, log, err := loadConfig(stderr)
+			if err != nil {
+				return err
+			}
+			svc, done, err := nameMigration(cmd.Context(), cfg, log)
+			if err != nil {
+				return err
+			}
+			defer done()
+			svc.StripInvalid = stripInvalid
+			res, err := svc.MigrateKratosNames(cmd.Context(), dryRun)
+			prefix := ""
+			if dryRun {
+				prefix = "dry_run=true "
+			}
+			_, _ = fmt.Fprintf(stdout, "%sscanned=%d migrated=%d stripped_only=%d failed=%d\n",
+				prefix, res.Scanned, res.Migrated, res.StrippedOnly, res.Failed)
+			return err
+		},
+	}
+	migrateNames.Flags().BoolVar(&dryRun, "dry-run", false, "report what would change without writing")
+	migrateNames.Flags().BoolVar(&stripInvalid, "strip-invalid", false,
+		"remove names that fail validation from Kratos without storing them (audited); default: keep them and count as failed")
+	cmd.AddCommand(migrateNames)
 	return cmd
+}
+
+// nameMigration wires `pii migrate-kratos-names` (DATABASE_URL, key
+// manager, Kratos admin).
+func nameMigration(ctx context.Context, cfg platform.Config, log *slog.Logger) (*app.NameMigrationService, func(), error) {
+	if cfg.DatabaseURL == "" {
+		return nil, nil, errors.New("DATABASE_URL is required")
+	}
+	keys, _, err := newKeyManager(cfg, log)
+	if err != nil {
+		return nil, nil, err
+	}
+	pool, err := postgres.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return nil, nil, err
+	}
+	store := postgres.NewStore(pool)
+	repos := store.Repos()
+	kadmin := kratos.NewAdmin(cfg.KratosAdminURL, oryHTTP(cfg))
+	pi := &app.PersonalInfoService{
+		Identities: kadmin, Keys: keys, Cache: app.NewDEKCache(cfg.PIIDEKCacheSize, cfg.PIIDEKCacheTTL, nil), Tx: store,
+		SubjectKeys: repos.SubjectKeys, Records: repos.PersonalInfo, Clock: app.SystemClock{}, Log: log,
+	}
+	return &app.NameMigrationService{PersonalInfo: pi, Kratos: kadmin, Log: log}, pool.Close, nil
 }
 
 func migrateCmd(stderr io.Writer) *cobra.Command {

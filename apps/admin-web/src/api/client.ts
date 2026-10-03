@@ -39,6 +39,7 @@ export const REVEAL_REASON_CODES: readonly RevealReasonCode[] = [
 ];
 
 export const PII_FIELDS: readonly PiiField[] = [
+  "name",
   "phone_number",
   "date_of_birth",
   "address",

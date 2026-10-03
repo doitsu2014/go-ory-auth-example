@@ -38,6 +38,9 @@ type prop struct {
 // errors (422) that name the field and a code, never the value.
 var strictBodies = map[string]prop{
 	"PUT /v1/me/personal-info": {kind: kindObject, props: map[string]prop{
+		"name": {kind: kindObject, nullable: true, props: map[string]prop{
+			"first": {kind: kindString}, "last": {kind: kindString},
+		}},
 		"phone_number":  {kind: kindString, nullable: true},
 		"date_of_birth": {kind: kindDate, nullable: true},
 		"address": {kind: kindObject, nullable: true, props: map[string]prop{

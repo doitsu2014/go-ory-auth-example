@@ -160,7 +160,10 @@ type Identity struct {
 	Email         string
 	EmailVerified bool
 	Name          Name
-	HasTOTP       bool
+	// HasNameTrait reports that traits.name is present, even as an empty
+	// object (legacy customer identities, removed by the name migration).
+	HasNameTrait bool
+	HasTOTP      bool
 	// TOTPCreatedAt is when the TOTP credential was enrolled (zero if none
 	// or unknown).
 	TOTPCreatedAt time.Time

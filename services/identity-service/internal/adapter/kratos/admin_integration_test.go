@@ -70,6 +70,39 @@ func TestFR11_KratosAdminAdapter(t *testing.T) {
 	}
 }
 
+// NAME-FR-08: the name trait is removed only while it still holds the
+// expected value (JSON Patch test + remove). Exercised on an admin identity:
+// the customer schema no longer accepts a name.
+func TestNameFR08_RemoveTraitName(t *testing.T) {
+	env := itest.Load()
+	a := NewAdmin(env.KratosAdmin, nil)
+	ctx := context.Background()
+	ident, err := a.CreateIdentity(ctx, app.NewIdentity{SchemaID: "admin", Email: itest.UniqueEmail("kname"), Name: identity.Name{First: "Kim"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = a.DeleteIdentity(context.Background(), ident.ID) })
+	if err := a.RemoveTraitName(ctx, ident.ID, identity.Name{First: "Kim", Last: "Other"}); !errors.Is(err, app.ErrConflict) {
+		t.Fatalf("changed name must not be removed: %v", err)
+	}
+	if got, _ := a.GetIdentity(ctx, ident.ID); got.Name.First != "Kim" {
+		t.Fatal("name must be kept on conflict")
+	}
+	if err := a.RemoveTraitName(ctx, ident.ID, identity.Name{First: "Kim"}); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	got, err := a.GetIdentity(ctx, ident.ID)
+	if err != nil || got.Name != (identity.Name{}) || got.Email != ident.Email {
+		t.Fatalf("after remove: %v", err)
+	}
+	if err := a.RemoveTraitName(ctx, ident.ID, identity.Name{First: "Kim"}); err != nil {
+		t.Fatalf("idempotent remove: %v", err)
+	}
+	if err := a.RemoveTraitName(ctx, uuid.New(), identity.Name{First: "Kim"}); !errors.Is(err, app.ErrNotFound) {
+		t.Fatalf("unknown identity: %v", err)
+	}
+}
+
 func TestFR08_VerifierAgainstKratos(t *testing.T) {
 	env := itest.Load()
 	email := itest.UniqueEmail("verifier")

@@ -182,6 +182,11 @@ type Identities struct {
 	RecoveryErr     error
 	Err             error
 	Clock           app.Clock
+	// RemoveNameErr fails RemoveTraitName (simulates a Kratos outage or a
+	// crash after the encrypted copy was committed); NameRemoved records
+	// successful removals.
+	RemoveNameErr error
+	NameRemoved   []uuid.UUID
 }
 
 // NewIdentities creates an empty fake.
@@ -250,6 +255,29 @@ func (f *Identities) ListIdentities(_ context.Context, q app.IdentityQuery) ([]i
 		end = len(out)
 	}
 	return out[start:end], next, nil
+}
+
+// RemoveTraitName implements app.NameTraitAdmin (compare + remove).
+func (f *Identities) RemoveTraitName(_ context.Context, id uuid.UUID, old identity.Name) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.RemoveNameErr != nil {
+		return f.RemoveNameErr
+	}
+	i, ok := f.M[id]
+	if !ok {
+		return app.ErrNotFound
+	}
+	if i.Name == (identity.Name{}) && !i.HasNameTrait {
+		return nil
+	}
+	if i.Name != old {
+		return app.ErrConflict
+	}
+	i.Name, i.HasNameTrait = identity.Name{}, false
+	f.M[id] = i
+	f.NameRemoved = append(f.NameRemoved, id)
+	return nil
 }
 
 // CreateIdentity implements app.IdentityAdmin.
@@ -729,4 +757,25 @@ func (r piiRepo) FindByPhoneBidx(_ context.Context, b app.BlindIndex, limit int)
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+// SetName enforces the composite FK and the "only fill an empty name under
+// the same key" rule of SetCustomerPIIName.
+func (r piiRepo) SetName(_ context.Context, id, keyID uuid.UUID, nameCT []byte) (bool, error) {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+	rec, ok := r.s.PII[id]
+	if ok && (rec.KeyID != keyID || rec.Name != nil) {
+		return false, nil // ON CONFLICT … WHERE did not match
+	}
+	if k, found := r.s.Keys[id]; !found || k.KeyID != keyID {
+		return false, fmt.Errorf("%w: customer_pii_subject_key_fk", app.ErrConflict)
+	}
+	if !ok {
+		rec = app.EncryptedPII{IdentityID: id, KeyID: keyID}
+	}
+	rec.Name = append([]byte(nil), nameCT...)
+	rec.UpdatedAt = r.s.now()
+	r.s.PII[id] = rec
+	return true, nil
 }

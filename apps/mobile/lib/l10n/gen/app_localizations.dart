@@ -158,6 +158,18 @@ abstract class AppLocalizations {
   /// **'Last name'**
   String get lastName;
 
+  /// No description provided for @fullName.
+  ///
+  /// In en, this message translates to:
+  /// **'Full name'**
+  String get fullName;
+
+  /// Display order of a person's name parts.
+  ///
+  /// In en, this message translates to:
+  /// **'{first} {last}'**
+  String personName(String first, String last);
+
   /// No description provided for @forgotPassword.
   ///
   /// In en, this message translates to:

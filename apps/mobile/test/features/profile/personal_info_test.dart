@@ -6,6 +6,7 @@ void main() {
   group('PersonalInfo JSON', () {
     test('fromJson: full payload', () {
       final p = PersonalInfo.fromJson({
+        'name': {'first': 'An', 'last': 'Nguyễn'},
         'phone_number': '+84901234567',
         'date_of_birth': '1990-05-17',
         'address': {
@@ -19,6 +20,8 @@ void main() {
         'national_id': {'type': 'cccd', 'number': '079123456123'},
         'updated_at': '2026-10-03T08:00:00Z',
       });
+      expect(p.name!.first, 'An');
+      expect(p.name!.last, 'Nguyễn');
       expect(p.phoneNumber, '+84901234567');
       expect(p.dateOfBirth, DateTime(1990, 5, 17));
       expect(p.address!.line1, '1 Le Loi');
@@ -34,6 +37,7 @@ void main() {
 
     test('fromJson: never set -> all null', () {
       final p = PersonalInfo.fromJson({
+        'name': null,
         'phone_number': null,
         'date_of_birth': null,
         'address': null,
@@ -45,8 +49,34 @@ void main() {
       expect(PersonalInfo.fromJson(const {}).isEmpty, isTrue);
     });
 
+    test('fromJson: name with both parts empty -> absent', () {
+      for (final n in [
+        <String, dynamic>{},
+        {'first': '', 'last': ''},
+        {'first': '  ', 'last': null},
+      ]) {
+        final p = PersonalInfo.fromJson({'name': n});
+        expect(p.name, isNull, reason: '$n');
+        expect(p.isEmpty, isTrue);
+      }
+      final only = PersonalInfo.fromJson({
+        'name': {'last': 'Trần'},
+      });
+      expect(only.name!.first, isNull);
+      expect(only.name!.last, 'Trần');
+      expect(only.toJson()['name'], {'last': 'Trần'});
+    });
+
+    test('toJson: empty name sends null', () {
+      expect(
+        const PersonalInfo(name: PersonName(first: '')).toJson()['name'],
+        isNull,
+      );
+    });
+
     test('toJson: full replacement sends explicit nulls, no updated_at', () {
       expect(PersonalInfo(updatedAt: DateTime.utc(2026)).toJson(), {
+        'name': null,
         'phone_number': null,
         'date_of_birth': null,
         'address': null,
@@ -56,12 +86,14 @@ void main() {
 
     test('toJson: values; optional address fields omitted when null', () {
       final json = PersonalInfo(
+        name: const PersonName(first: 'Bình', last: 'Lê'),
         phoneNumber: '+84901234567',
         dateOfBirth: DateTime(2001, 2, 3),
         address: const Address(line1: 'L1', city: 'C', country: 'VN'),
         nationalId: const NationalId(type: 'passport', number: 'B1234567'),
       ).toJson();
       expect(json, {
+        'name': {'first': 'Bình', 'last': 'Lê'},
         'phone_number': '+84901234567',
         'date_of_birth': '2001-02-03',
         'address': {'line1': 'L1', 'city': 'C', 'country': 'VN'},
@@ -71,6 +103,7 @@ void main() {
 
     test('round trip', () {
       const src = {
+        'name': {'first': 'Thị Minh Khai', 'last': 'Nguyễn'},
         'phone_number': '+14155550100',
         'date_of_birth': '1985-12-31',
         'address': {
@@ -88,11 +121,13 @@ void main() {
 
     test('toString never prints values', () {
       const p = PersonalInfo(
+        name: PersonName(first: 'Secretfirst', last: 'Secretlast'),
         phoneNumber: '+84901234567',
         address: Address(line1: 'secret st', city: 'C', country: 'VN'),
         nationalId: NationalId(type: 'cccd', number: '079123456123'),
       );
-      for (final s in [p, p.address, p.nationalId].map((o) => '$o')) {
+      for (final s in [p, p.name, p.address, p.nationalId].map((o) => '$o')) {
+        expect(s, isNot(contains('Secret')));
         expect(s, isNot(contains('84901234567')));
         expect(s, isNot(contains('secret')));
         expect(s, isNot(contains('079123456123')));
@@ -250,6 +285,98 @@ void main() {
         ).validate(today),
         isEmpty,
       );
+    });
+
+    test('name: trimmed, optional parts, Vietnamese diacritics', () {
+      const d = PersonalInfoDraft(
+        firstName: '  Thị Ngọc Ánh ',
+        lastName: ' Nguyễn ',
+      );
+      expect(d.validate(today), isEmpty);
+      final n = d.toPersonalInfo().name!;
+      expect(n.first, 'Thị Ngọc Ánh');
+      expect(n.last, 'Nguyễn');
+      expect(
+        const PersonalInfoDraft(lastName: 'Trần')
+            .toPersonalInfo()
+            .toJson()['name'],
+        {'last': 'Trần'},
+      );
+      // Both parts blank -> no name (sent as null, clears it).
+      const blank = PersonalInfoDraft(firstName: '  ');
+      expect(blank.validate(today), isEmpty);
+      expect(blank.toPersonalInfo().name, isNull);
+      expect(blank.toPersonalInfo().toJson()['name'], isNull);
+    });
+
+    test('name: at most 100 runes (not UTF-16 units)', () {
+      // Precomposed "ễ" is 1 rune; an astral emoji is 1 rune (2 UTF-16 units).
+      final astral100 = '\u{1F600}' * 100;
+      expect(PersonalInfoDraft(firstName: astral100).validate(today), isEmpty);
+      expect(
+        PersonalInfoDraft(
+          firstName: 'ễ' * 100,
+          lastName: '\u{1F600}' * 101,
+        ).validate(today),
+        {PiiField.lastName: PiiErrorCode.tooLong},
+      );
+      expect(PersonalInfoDraft(firstName: 'a' * 101).validate(today), {
+        PiiField.firstName: PiiErrorCode.tooLong,
+      });
+    });
+
+    test('name: C0, DEL and C1 control characters rejected', () {
+      for (final c in ['\u0000', '\u0009', '\u007F', '\u0085', '\u009F']) {
+        expect(
+          PersonalInfoDraft(
+            firstName: 'A${c}n',
+            lastName: 'B${c}c',
+          ).validate(today),
+          {
+            PiiField.firstName: PiiErrorCode.invalidCharacters,
+            PiiField.lastName: PiiErrorCode.invalidCharacters,
+          },
+          reason: c.codeUnitAt(0).toRadixString(16),
+        );
+      }
+    });
+
+    test('name: Unicode format characters (Cf) rejected', () {
+      for (final c in [
+        '\u200B', // zero-width space
+        '\u202E', // RTL override
+        '\u2066',
+        '\u2067',
+        '\u2068',
+        '\u2069',
+        '\uFEFF', // BOM / ZWNBSP
+        '\u00AD', // soft hyphen
+      ]) {
+        expect(
+          PersonalInfoDraft(
+            firstName: 'A${c}n',
+            lastName: 'B${c}c',
+          ).validate(today),
+          {
+            PiiField.firstName: PiiErrorCode.invalidCharacters,
+            PiiField.lastName: PiiErrorCode.invalidCharacters,
+          },
+          reason: c.codeUnitAt(0).toRadixString(16),
+        );
+      }
+    });
+
+    test('name: only whitespace / format characters counts as empty', () {
+      const d = PersonalInfoDraft(
+        firstName: ' \u200B\u202E ',
+        lastName: '\u2066\u2069',
+      );
+      expect(d.validate(today), isEmpty);
+      expect(d.toPersonalInfo().name, isNull);
+      expect(d.toPersonalInfo().toJson()['name'], isNull);
+      const mixed = PersonalInfoDraft(firstName: '\u200B', lastName: 'Lê');
+      expect(mixed.validate(today), isEmpty);
+      expect(mixed.toPersonalInfo().toJson()['name'], {'last': 'Lê'});
     });
 
     test('age uses the UTC calendar date', () {

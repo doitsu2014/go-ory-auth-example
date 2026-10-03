@@ -9,9 +9,11 @@ import 'package:go_ory_auth_mobile/features/auth/presentation/widgets/flow_form.
 import 'package:go_ory_auth_mobile/l10n/gen/app_localizations.dart';
 import 'package:go_router/go_router.dart';
 
-/// Native registration flow: `{method: password, traits{email,
-/// name{first,last}}, password}`. On success the session token is stored and
-/// the router follows `continue_with` to the verify-email screen.
+/// Native registration flow: `{method: password, traits{email}, password}`.
+/// The name is not asked here: it is personal info, entered on the
+/// personal-info screen after email verification. On success the session
+/// token is stored and the router follows `continue_with` to the
+/// verify-email screen.
 class SignUpScreen extends ConsumerStatefulWidget {
   const SignUpScreen({super.key});
 
@@ -21,17 +23,8 @@ class SignUpScreen extends ConsumerStatefulWidget {
 
 class _SignUpScreenState extends ConsumerState<SignUpScreen>
     with FlowFormMixin {
-  static const _bound = {
-    'traits.email',
-    'traits.name.first',
-    'traits.name.last',
-    'password',
-    'csrf_token',
-    'method',
-  };
+  static const _bound = {'traits.email', 'password', 'csrf_token', 'method'};
   final _email = TextEditingController();
-  final _first = TextEditingController();
-  final _last = TextEditingController();
   final _password = TextEditingController();
 
   @override
@@ -46,7 +39,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
 
   @override
   void dispose() {
-    for (final c in [_email, _first, _last, _password]) {
+    for (final c in [_email, _password]) {
       c.dispose();
     }
     super.dispose();
@@ -59,8 +52,6 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
           flowId: flow!.id,
           email: _email.text.trim(),
           password: _password.text,
-          firstName: _first.text.trim(),
-          lastName: _last.text.trim(),
         );
     ref.read(authControllerProvider.notifier).registered(outcome);
   });
@@ -81,24 +72,6 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
           decoration: InputDecoration(
             labelText: l10n.email,
             errorText: fieldError(context, 'traits.email'),
-          ),
-        ),
-        TextField(
-          key: const Key('signUp.first'),
-          controller: _first,
-          autofillHints: const [AutofillHints.givenName],
-          decoration: InputDecoration(
-            labelText: l10n.firstName,
-            errorText: fieldError(context, 'traits.name.first'),
-          ),
-        ),
-        TextField(
-          key: const Key('signUp.last'),
-          controller: _last,
-          autofillHints: const [AutofillHints.familyName],
-          decoration: InputDecoration(
-            labelText: l10n.lastName,
-            errorText: fieldError(context, 'traits.name.last'),
           ),
         ),
         TextField(

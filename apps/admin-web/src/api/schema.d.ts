@@ -442,7 +442,7 @@ export interface components {
        * @description Stable machine code. Known values: unauthenticated, forbidden, not_admin,
        *     aal2_required, mfa_enrollment_required, email_not_verified, not_found,
        *     conflict, validation_failed, rate_limited, dependency_unavailable, internal,
-       *     invalid_token, insufficient_scope (machine plane; also sent in `WWW-Authenticate`).
+       *     invalid_request, invalid_token, insufficient_scope (machine plane; also sent in `WWW-Authenticate`).
        *     Clients must tolerate unknown values.
        */
       code: string;
@@ -477,7 +477,12 @@ export interface components {
       /** Format: email */
       email: string;
       email_verified: boolean;
+      /**
+       * @deprecated
+       * @description Never returned. The customer's name is encrypted personal info (GET /v1/me/personal-info).
+       */
       name?: components["schemas"]["PersonName"];
+      /** @description Optional nickname; not the real name */
       display_name?: string | null;
       avatar_url?: string | null;
       /** @example vi-VN */
@@ -507,6 +512,8 @@ export interface components {
     };
     /** @description Customer PII. Stored encrypted (AES-256-GCM, per-customer key). */
     PersonalInfo: {
+      /** @description Real name. Each part trimmed, no control characters; both parts empty = absent */
+      name?: components["schemas"]["PersonName"] | null;
       /**
        * @description E.164; spaces, dashes and dots are stripped
        * @example +84901234567
@@ -520,6 +527,13 @@ export interface components {
       readonly updated_at?: string | null;
     };
     MaskedPersonalInfo: {
+      /** @description First character of each part + fixed "***" */
+      name?: {
+        /** @example A*** */
+        first?: string | null;
+        /** @example N*** */
+        last?: string | null;
+      } | null;
       /**
        * @description Calling code + fixed 7 stars + last 3
        * @example +84*******567
@@ -540,6 +554,7 @@ export interface components {
          */
         number?: string;
       } | null;
+      has_name: boolean;
       has_phone_number: boolean;
       has_date_of_birth: boolean;
       has_address: boolean;
@@ -558,7 +573,7 @@ export interface components {
       /** @example SUP-1234 */
       ticket_ref?: string;
       /** @description Fields to reveal (data minimisation). Omitted = all. */
-      fields?: ("phone_number" | "date_of_birth" | "address" | "national_id")[];
+      fields?: ("name" | "phone_number" | "date_of_birth" | "address" | "national_id")[];
     };
     CustomerLookupRequest: {
       /** @example +84901234567 */
@@ -654,8 +669,13 @@ export interface components {
       /** Format: email */
       email: string;
       email_verified: boolean;
+      /**
+       * @deprecated
+       * @description Never returned for customers. The name is encrypted personal info (masked via /admin/v1/customers/{id}/personal-info).
+       */
       name?: components["schemas"]["PersonName"];
       state: components["schemas"]["IdentityState"];
+      /** @description Optional nickname; not the real name */
       display_name?: string | null;
       /** Format: date-time */
       created_at: string;
@@ -1255,9 +1275,11 @@ export interface operations {
           "application/json": components["schemas"]["MachineCustomer"];
         };
       };
+      400: components["responses"]["Problem"];
       401: components["responses"]["Problem"];
       403: components["responses"]["Problem"];
       404: components["responses"]["Problem"];
+      422: components["responses"]["Problem"];
       429: components["responses"]["Problem"];
       503: components["responses"]["Problem"];
     };
@@ -1286,8 +1308,10 @@ export interface operations {
           "application/json": components["schemas"]["MachineAuditEventPage"];
         };
       };
+      400: components["responses"]["Problem"];
       401: components["responses"]["Problem"];
       403: components["responses"]["Problem"];
+      422: components["responses"]["Problem"];
       429: components["responses"]["Problem"];
       503: components["responses"]["Problem"];
     };

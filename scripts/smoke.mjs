@@ -51,14 +51,23 @@ class Jar {
   }
 }
 
-async function nativeRegister(email, password) {
-  const flow = await json(await fetch(`${KRATOS}/self-service/registration/api`));
-  const res = await fetch(`${KRATOS}/self-service/registration?flow=${flow.id}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({ method: "password", password, traits: { email, name: { first: "Smoke", last: "Test" } } }),
-  });
-  return { status: res.status, body: await json(res) };
+// The customer schema holds the email only; the real name is encrypted
+// personal info (NAME-FR-01).
+// Kratos answers 500 when its HaveIBeenPwned lookup times out; retry a few times.
+async function nativeRegister(email, password, traits = { email }) {
+  let out;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const flow = await json(await fetch(`${KRATOS}/self-service/registration/api`));
+    const res = await fetch(`${KRATOS}/self-service/registration?flow=${flow.id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ method: "password", password, traits }),
+    });
+    out = { status: res.status, body: await json(res) };
+    if (res.status < 500) break;
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  return out;
 }
 
 async function nativeLogin(identifier, password) {
@@ -118,12 +127,15 @@ function rawIdentityRow(sql) {
   }
 }
 
-// Encrypted personal information (PII-FR-01/02/04, PII-NFR-04).
+// Encrypted personal information (PII-FR-01/02/04, PII-NFR-04, NAME-FR-02/03).
 async function piiChecks(token, identityId) {
   const auth = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
   const phoneDigits = `9${Math.floor(10000000 + Math.random() * 89999999)}`;
   const nid = `079${Math.floor(100000000 + Math.random() * 899999999)}`;
+  const first = `Khoa${randomBytes(4).toString("hex")}`;
+  const last = `Smokeson${randomBytes(4).toString("hex")}`;
   const info = {
+    name: { first: ` ${first} `, last },
     phone_number: `+84 ${phoneDigits}`,
     date_of_birth: "1990-05-17",
     address: { line1: "12 Smoke Street", city: "Ho Chi Minh City", country: "VN" },
@@ -132,16 +144,26 @@ async function piiChecks(token, identityId) {
   let res = await fetch(`${API}/v1/me/personal-info`, { method: "PUT", headers: auth, body: JSON.stringify(info) });
   let body = await json(res);
   check("PII-FR-02 PUT /v1/me/personal-info stores and normalises", res.status === 200 && body.phone_number === `+84${phoneDigits}`, `status ${res.status} ${body.code ?? ""}`);
+  check("NAME-FR-02 PUT stores the name (parts trimmed)", res.status === 200 && body.name?.first === first && body.name?.last === last, `status ${res.status}`);
 
   res = await fetch(`${API}/v1/me/personal-info`, { headers: auth });
   body = await json(res);
   check("PII-FR-01 GET /v1/me/personal-info decrypts", res.status === 200 && body.national_id?.number === nid && body.address?.city === "Ho Chi Minh City", `status ${res.status}`);
+  check("NAME-FR-02 GET /v1/me/personal-info returns the name", res.status === 200 && body.name?.first === first && body.name?.last === last, `status ${res.status}`);
+
+  res = await fetch(`${API}/v1/me`, { headers: auth });
+  body = await json(res);
+  check("NAME-FR-07 GET /v1/me carries no name", res.status === 200 && !("name" in body), `status ${res.status}`);
 
   if (identityId) {
     const row = rawIdentityRow(`SELECT t::text FROM customer_pii t WHERE identity_id = '${identityId}'`);
     check("PII-NFR-04 raw customer_pii row holds no plaintext", row !== null && row.trim() !== "" &&
       !row.includes(phoneDigits) && !row.includes(nid) && !row.includes("Smoke Street") && !row.includes("1990-05-17"),
       row === null ? "psql unavailable" : "");
+    const nameCt = rawIdentityRow(`SELECT encode(name_ct, 'hex') FROM customer_pii WHERE identity_id = '${identityId}'`)?.trim() ?? "";
+    const hex = (v) => Buffer.from(v).toString("hex");
+    check("NAME-FR-03 raw name_ct is ciphertext without the name", nameCt.startsWith("01") && nameCt.length > 2 * 28 &&
+      ![first, last].some((v) => row?.includes(v) || nameCt.includes(hex(v))), row === null ? "psql unavailable" : `${nameCt.length / 2} bytes`);
   }
 
   res = await fetch(`${API}/v1/me/personal-info`, { method: "DELETE", headers: auth });
@@ -209,11 +231,20 @@ async function main() {
   const email = `smoke-${randomUUID()}@example.local`;
   const password = strongPassword();
   let currentPassword = password;
+  const nameEmail = `smoke-name-${randomUUID()}@example.local`;
+  const withName = await nativeRegister(nameEmail, password, { email: nameEmail, name: { first: "Smoke", last: "Test" } });
+  check("NAME-FR-01 native registration with traits.name is rejected (400)", withName.status === 400, `status ${withName.status}`);
+  if (withName.body.identity?.id) created.push(withName.body.identity.id);
   const reg = await nativeRegister(email, password);
   check("FR-01 native registration returns a session token", reg.status === 200 && !!reg.body.session_token, `status ${reg.status}`);
   const token = reg.body.session_token;
   const customerId = reg.body.identity?.id;
   if (customerId) created.push(customerId);
+  if (customerId) {
+    const k = await json(await fetch(`${KRATOS_ADMIN}/admin/identities/${customerId}`));
+    check("NAME-FR-01 Kratos traits hold the email only", k.traits?.email === email && !("name" in (k.traits ?? {})) &&
+      Object.keys(k.traits ?? {}).length === 1, `keys ${Object.keys(k.traits ?? {}).join(",")}`);
+  }
 
   // ---- Customer: API with bearer (FR-08/FR-09) ----
   let res = await fetch(`${API}/v1/me`, { headers: { Authorization: `Bearer ${token}` } });

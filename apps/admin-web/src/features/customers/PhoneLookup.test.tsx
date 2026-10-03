@@ -68,6 +68,7 @@ describe("PhoneLookup", () => {
     const results = await screen.findByRole("table", { name: "Phone lookup results" });
     expect(within(results).getByText("+84*******567")).toBeInTheDocument();
     expect(within(results).getByText("Ha Noi, VN")).toBeInTheDocument();
+    expect(within(results).getByText("A*** N***")).toBeInTheDocument();
 
     // The number is never in the URL, router state or TanStack caches.
     const loc = router.state.location;

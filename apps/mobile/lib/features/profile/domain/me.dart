@@ -1,27 +1,9 @@
 // identity-service `/v1/me` models (api/openapi/identity-service.v1.yaml).
 // Hand-written instead of openapi-generator `dart-dio` (needs a JVM).
 
-class PersonName {
-  const PersonName({this.first, this.last});
-
-  factory PersonName.fromJson(Map<String, dynamic> json) => PersonName(
-    first: json['first'] as String?,
-    last: json['last'] as String?,
-  );
-
-  final String? first;
-  final String? last;
-
-  String get full =>
-      [first, last].whereType<String>().where((s) => s.isNotEmpty).join(' ');
-
-  Map<String, dynamic> toJson() => {
-    if (first != null) 'first': first,
-    if (last != null) 'last': last,
-  };
-}
-
 /// `Me` schema. Required: id, email, email_verified, locale, created_at.
+/// The deprecated `name` is never returned (NAME-FR-07) and is ignored if
+/// present: the name is personal info (`PersonalInfo.name`).
 class Me {
   const Me({
     required this.id,
@@ -29,7 +11,6 @@ class Me {
     required this.emailVerified,
     required this.locale,
     required this.createdAt,
-    this.name,
     this.displayName,
     this.avatarUrl,
   });
@@ -40,9 +21,6 @@ class Me {
     emailVerified: json['email_verified'] as bool,
     locale: json['locale'] as String? ?? '',
     createdAt: DateTime.parse(json['created_at'] as String),
-    name: json['name'] is Map
-        ? PersonName.fromJson((json['name'] as Map).cast<String, dynamic>())
-        : null,
     displayName: json['display_name'] as String?,
     avatarUrl: json['avatar_url'] as String?,
   );
@@ -50,7 +28,6 @@ class Me {
   final String id;
   final String email;
   final bool emailVerified;
-  final PersonName? name;
   final String? displayName;
   final String? avatarUrl;
   final String locale;

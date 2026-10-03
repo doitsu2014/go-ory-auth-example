@@ -60,8 +60,6 @@ void main() {
             flowId: 'f1',
             email: 'an@example.com',
             password: 'pw',
-            firstName: 'An',
-            lastName: 'Nguyen',
           ),
         ).thenAnswer(
           (_) async => NativeAuthResult(
@@ -74,8 +72,6 @@ void main() {
           flowId: 'f1',
           email: 'an@example.com',
           password: 'pw',
-          firstName: 'An',
-          lastName: 'Nguyen',
         );
         expect(out.verificationFlowId, 'vf-1');
         expect(await tokens.read(), 'ory_st_new');
@@ -95,8 +91,6 @@ void main() {
           flowId: any(named: 'flowId'),
           email: any(named: 'email'),
           password: any(named: 'password'),
-          firstName: any(named: 'firstName'),
-          lastName: any(named: 'lastName'),
         ),
       ).thenThrow(FlowValidationFailure(bad));
       await expectLater(

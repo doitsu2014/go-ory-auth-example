@@ -213,10 +213,59 @@ func TestReview14_ColumnLevelUpdateGrants(t *testing.T) {
 	}
 	for _, q := range []string{
 		"UPDATE customer_pii SET dob_ct = NULL, updated_at = now() WHERE identity_id = $1",
+		"UPDATE customer_pii SET name_ct = NULL WHERE identity_id = $1", // 0005
 		"UPDATE subject_key SET rewrapped_at = now() WHERE identity_id = $1",
 	} {
 		if _, err := s.pool.Exec(ctx, q, id); err != nil {
 			t.Fatalf("%s: %v", q, err)
 		}
+	}
+}
+
+// Technical spec §1 (migration 0005): SetCustomerPIIName inserts a record,
+// or fills an empty name under the same key, and never touches the other
+// columns; Upsert/Get carry name_ct.
+func TestNameFR03_SetNameAndUpsert(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	r := s.Repos()
+	id := uuid.New()
+	k, _, err := r.SubjectKeys.Insert(ctx, newKey(id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = r.SubjectKeys.Delete(context.Background(), id) })
+	if _, err := r.PersonalInfo.SetName(ctx, id, uuid.New(), []byte{9}); !errors.Is(err, app.ErrConflict) {
+		t.Fatalf("insert under a foreign key must violate the FK: %v", err)
+	}
+	if set, err := r.PersonalInfo.SetName(ctx, id, k.KeyID, []byte{7, 7}); err != nil || !set {
+		t.Fatalf("insert: %v %v", set, err)
+	}
+	back, err := r.PersonalInfo.Get(ctx, id)
+	if err != nil || !bytes.Equal(back.Name, []byte{7, 7}) || back.Phone != nil || back.Address != nil {
+		t.Fatalf("get after insert: %v", err)
+	}
+	if set, err := r.PersonalInfo.SetName(ctx, id, k.KeyID, []byte{8}); err != nil || set {
+		t.Fatalf("an existing name must not be overwritten: %v %v", set, err)
+	}
+	// Upsert replaces the whole record (name included).
+	if _, err := r.PersonalInfo.Upsert(ctx, app.EncryptedPII{IdentityID: id, KeyID: k.KeyID, Address: []byte{4}}); err != nil {
+		t.Fatal(err)
+	}
+	if back, _ := r.PersonalInfo.Get(ctx, id); back.Name != nil || !bytes.Equal(back.Address, []byte{4}) {
+		t.Fatal("upsert without name clears name_ct")
+	}
+	// Fill an empty name: other columns untouched.
+	if set, err := r.PersonalInfo.SetName(ctx, id, k.KeyID, []byte{5}); err != nil || !set {
+		t.Fatalf("fill: %v %v", set, err)
+	}
+	if back, _ := r.PersonalInfo.Get(ctx, id); !bytes.Equal(back.Name, []byte{5}) || !bytes.Equal(back.Address, []byte{4}) {
+		t.Fatal("fill must keep the other columns")
+	}
+	if _, err := r.PersonalInfo.Upsert(ctx, app.EncryptedPII{IdentityID: id, KeyID: k.KeyID, Name: []byte{6}}); err != nil {
+		t.Fatal(err)
+	}
+	if back, _ := r.PersonalInfo.Get(ctx, id); !bytes.Equal(back.Name, []byte{6}) || back.Address != nil {
+		t.Fatal("upsert stores name_ct")
 	}
 }

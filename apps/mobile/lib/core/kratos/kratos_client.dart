@@ -15,8 +15,6 @@ abstract interface class KratosClient {
     required String flowId,
     required String email,
     required String password,
-    String? firstName,
-    String? lastName,
   });
 
   Future<KratosFlow> createLoginFlow({

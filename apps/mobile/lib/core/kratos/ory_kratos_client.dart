@@ -86,13 +86,9 @@ class OryKratosClient implements KratosClient {
     required String flowId,
     required String email,
     required String password,
-    String? firstName,
-    String? lastName,
   }) {
-    final name = <String, String>{
-      if (firstName != null && firstName.isNotEmpty) 'first': firstName,
-      if (lastName != null && lastName.isNotEmpty) 'last': lastName,
-    };
+    // The customer schema has only `email`; the name is personal info
+    // (identity-service `PUT /v1/me/personal-info`), never a Kratos trait.
     final body = UpdateRegistrationFlowBody(
       (b) => b
         ..oneOf = OneOfDynamic(
@@ -102,10 +98,7 @@ class OryKratosClient implements KratosClient {
             (p) => p
               ..method = 'password'
               ..password = password
-              ..traits = JsonObject(<String, Object>{
-                'email': email,
-                if (name.isNotEmpty) 'name': name,
-              }),
+              ..traits = JsonObject(<String, Object>{'email': email}),
           ),
         ),
     );

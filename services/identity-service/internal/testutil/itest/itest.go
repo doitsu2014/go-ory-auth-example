@@ -210,12 +210,32 @@ func (e Env) RegisterCustomer(t *testing.T, email string) Flow {
 	}
 	var out Flow
 	st, _ := JSON(t, nil, "POST", e.KratosPublic+"/self-service/registration?flow="+flow.ID, nil, map[string]any{
-		"method": "password", "password": Password, "traits": map[string]any{"email": email, "name": map[string]string{"first": "Test"}},
+		"method": "password", "password": Password, "traits": map[string]any{"email": email},
 	}, &out)
 	if st != 200 || out.SessionToken == "" {
 		t.Fatalf("register: %d %+v", st, out.UI.Messages)
 	}
 	return out
+}
+
+// RegisterCustomerTraits submits a native registration with arbitrary traits
+// and returns the HTTP status (for schema checks).
+func (e Env) RegisterCustomerTraits(t *testing.T, traits map[string]any) int {
+	t.Helper()
+	var flow Flow
+	if st, _ := JSON(t, nil, "GET", e.KratosPublic+"/self-service/registration/api", nil, nil, &flow); st != 200 {
+		t.Fatalf("registration flow: %d", st)
+	}
+	var out Flow
+	st, _ := JSON(t, nil, "POST", e.KratosPublic+"/self-service/registration?flow="+flow.ID, nil, map[string]any{
+		"method": "password", "password": Password, "traits": traits,
+	}, &out)
+	if out.Session.Identity.ID != "" {
+		if id, err := uuid.Parse(out.Session.Identity.ID); err == nil {
+			e.DeleteIdentity(t, id)
+		}
+	}
+	return st
 }
 
 // LoginAPI logs in via the native API flow; returns status and flow response.

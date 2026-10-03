@@ -45,4 +45,12 @@ request, and auditable when admins look at it.
 ## Revisit when
 
 - Moving to a managed KMS (AWS KMS / GCP KMS) in production.
-- Kratos traits (email, name) are minimised or moved into this store.
+- Kratos traits are minimised further (the email must stay for login).
+
+## Amendment (2026-10-03, intent 261003-move-customer-full)
+
+The customer name moved out of Kratos traits into this store as the encrypted
+field `name` (`customer_pii.name_ct`, same DEK and AAD scheme). Existing names
+are moved by `identity-service pii migrate-kratos-names` (08 §8.11). The
+customer email is the only customer PII left in plaintext, in Kratos
+(accepted risk, 06-security §6.7).

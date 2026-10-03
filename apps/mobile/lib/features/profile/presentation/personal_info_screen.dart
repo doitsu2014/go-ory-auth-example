@@ -25,6 +25,15 @@ final FutureProvider<PersonalInfo> personalInfoProvider =
       return ref.watch(profileRepositoryProvider).getPersonalInfo();
     }, retry: (_, _) => null);
 
+/// Localised display of a name ("first last" in en, "last first" in vi);
+/// `null` when absent.
+String? formatPersonName(AppLocalizations l10n, PersonName? name) {
+  if (name == null || name.isEmpty) return null;
+  return l10n
+      .personName(name.first?.trim() ?? '', name.last?.trim() ?? '')
+      .trim();
+}
+
 /// View / edit / erase the caller's personal information (PII-FR-10).
 ///
 /// - Validation mirrors the server (PII-FR-03); server `422` field errors
@@ -42,6 +51,8 @@ class PersonalInfoScreen extends ConsumerStatefulWidget {
 }
 
 class _PersonalInfoScreenState extends ConsumerState<PersonalInfoScreen> {
+  final _firstName = TextEditingController();
+  final _lastName = TextEditingController();
   final _phone = TextEditingController();
   final _dobText = TextEditingController();
   final _line1 = TextEditingController();
@@ -53,6 +64,8 @@ class _PersonalInfoScreenState extends ConsumerState<PersonalInfoScreen> {
   final _idNumber = TextEditingController();
 
   late final List<TextEditingController> _controllers = [
+    _firstName,
+    _lastName,
     _phone,
     _dobText,
     _line1,
@@ -84,6 +97,8 @@ class _PersonalInfoScreenState extends ConsumerState<PersonalInfoScreen> {
   void _openEditor(PersonalInfo info) {
     final a = info.address;
     final id = info.nationalId;
+    _firstName.text = info.name?.first ?? '';
+    _lastName.text = info.name?.last ?? '';
     _phone.text = info.phoneNumber ?? '';
     _line1.text = a?.line1 ?? '';
     _line2.text = a?.line2 ?? '';
@@ -123,6 +138,8 @@ class _PersonalInfoScreenState extends ConsumerState<PersonalInfoScreen> {
   }
 
   PersonalInfoDraft _draft() => PersonalInfoDraft(
+    firstName: _firstName.text,
+    lastName: _lastName.text,
     phoneNumber: _phone.text,
     dateOfBirth: _dob,
     line1: _line1.text,
@@ -254,12 +271,13 @@ class _PersonalInfoScreenState extends ConsumerState<PersonalInfoScreen> {
     }
   }
 
-  /// Localised message for [field]. Object-level server errors (`address`,
-  /// `national_id`) show on the first field of the group.
+  /// Localised message for [field]. Object-level server errors (`name`,
+  /// `address`, `national_id`) show on the first field of the group.
   String? _errorText(AppLocalizations l10n, String field) {
     final code =
         _errors[field] ??
         switch (field) {
+          PiiField.firstName => _errors[PiiField.name],
           PiiField.line1 => _errors[PiiField.address],
           PiiField.nationalIdNumber => _errors[PiiField.nationalId],
           _ => null,
@@ -346,6 +364,13 @@ class _PersonalInfoScreenState extends ConsumerState<PersonalInfoScreen> {
         padding: const EdgeInsets.all(24),
         children: [
           FailureBanner(failure: _failure),
+          ListTile(
+            title: Text(l10n.fullName),
+            subtitle: Text(
+              formatPersonName(l10n, info.name) ?? l10n.notProvided,
+              key: const Key('personalInfo.view.name'),
+            ),
+          ),
           ListTile(
             title: Text(l10n.phoneNumber),
             subtitle: Text(
@@ -456,6 +481,22 @@ class _PersonalInfoScreenState extends ConsumerState<PersonalInfoScreen> {
             child: Text(l10n.verifyNow),
           ),
         ),
+      _text(
+        l10n,
+        field: PiiField.firstName,
+        controller: _firstName,
+        label: l10n.firstName,
+        maxLength: maxNameLength,
+        capitalization: TextCapitalization.words,
+      ),
+      _text(
+        l10n,
+        field: PiiField.lastName,
+        controller: _lastName,
+        label: l10n.lastName,
+        maxLength: maxNameLength,
+        capitalization: TextCapitalization.words,
+      ),
       _text(
         l10n,
         field: PiiField.phoneNumber,

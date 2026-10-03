@@ -88,15 +88,11 @@ class AuthRepository {
     required String flowId,
     required String email,
     required String password,
-    String? firstName,
-    String? lastName,
   }) => _guard(() async {
     final result = await _kratos.submitRegistration(
       flowId: flowId,
       email: email,
       password: password,
-      firstName: firstName,
-      lastName: lastName,
     );
     final session = await _persist(result);
     return RegistrationOutcome(

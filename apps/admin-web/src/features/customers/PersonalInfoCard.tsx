@@ -11,6 +11,7 @@ import {
 } from "../../api/client";
 import { useCan } from "../../auth/me";
 import { useAuthRedirect } from "../../auth/useAuthRedirect";
+import { localizedName } from "../../shared/format";
 import { Alert } from "../../shared/ui/Alert";
 import { Button } from "../../shared/ui/Button";
 import { Card } from "../../shared/ui/Card";
@@ -24,6 +25,7 @@ import { RevealDialog } from "./RevealDialog";
 export const REVEAL_TTL_MS = 60_000;
 
 const HAS: Record<PiiField, keyof MaskedPersonalInfo> = {
+  name: "has_name",
   phone_number: "has_phone_number",
   date_of_birth: "has_date_of_birth",
   address: "has_address",
@@ -39,8 +41,12 @@ function join(parts: readonly (string | null | undefined)[]): string {
   return parts.filter(Boolean).join(", ");
 }
 
-function maskedValue(m: MaskedPersonalInfo, f: PiiField, idType: (s: string) => string) {
+type Fmt = { idType: (s: string) => string; lng: string };
+
+function maskedValue(m: MaskedPersonalInfo, f: PiiField, { idType, lng }: Fmt) {
   switch (f) {
+    case "name":
+      return localizedName(m.name, lng);
     case "phone_number":
       return m.phone_number ?? "";
     case "date_of_birth":
@@ -54,8 +60,10 @@ function maskedValue(m: MaskedPersonalInfo, f: PiiField, idType: (s: string) => 
   }
 }
 
-function revealedValue(p: PersonalInfo, f: PiiField, idType: (s: string) => string) {
+function revealedValue(p: PersonalInfo, f: PiiField, { idType, lng }: Fmt) {
   switch (f) {
+    case "name":
+      return localizedName(p.name, lng);
     case "phone_number":
       return p.phone_number ?? "";
     case "date_of_birth":
@@ -85,7 +93,7 @@ function revealedValue(p: PersonalInfo, f: PiiField, idType: (s: string) => stri
  * Render with `key={customerId}` so switching customers starts clean.
  */
 export function PersonalInfoCard({ customerId }: { customerId: string }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const qc = useQueryClient();
   const canReveal = useCan("reveal_customer_pii");
   const redirectOnAuthError = useAuthRedirect();
@@ -112,7 +120,10 @@ export function PersonalInfoCard({ customerId }: { customerId: string }) {
     return () => clearTimeout(timer);
   }, [revealed]);
 
-  const idType = (type: string) => t(`pii.nationalIdTypes.${type}`, { defaultValue: type });
+  const fmt: Fmt = {
+    idType: (type: string) => t(`pii.nationalIdTypes.${type}`, { defaultValue: type }),
+    lng: i18n.language,
+  };
 
   async function onReveal(body: RevealRequest) {
     setBusy(true);
@@ -150,11 +161,11 @@ export function PersonalInfoCard({ customerId }: { customerId: string }) {
             } else if (revealed?.fields.includes(f)) {
               value = (
                 <span className="font-mono" data-testid={`pii-revealed-${f}`}>
-                  {revealedValue(revealed.info, f, idType) || "—"}
+                  {revealedValue(revealed.info, f, fmt) || "—"}
                 </span>
               );
             } else {
-              const masked = maskedValue(m, f, idType);
+              const masked = maskedValue(m, f, fmt);
               value = masked ? (
                 <span className="font-mono">{masked}</span>
               ) : (

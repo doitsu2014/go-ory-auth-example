@@ -80,8 +80,7 @@ export const en = {
     detailTitle: "Customer",
     id: "ID",
     email: "Email",
-    name: "Name",
-    displayName: "Display name",
+    displayName: "Display name (nickname)",
     state: "State",
     emailVerified: "Email verified",
     created: "Created",
@@ -209,6 +208,7 @@ export const en = {
     notProvided: "Not provided",
     hidden: "Hidden",
     fields: {
+      name: "Full name",
       phone_number: "Phone number",
       date_of_birth: "Date of birth",
       address: "Address",

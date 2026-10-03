@@ -74,6 +74,7 @@ func (k kIdentity) toDomain() identity.Identity {
 		Email:         k.Traits.Email,
 		EmailVerified: k.emailVerified(),
 		Name:          k.name(),
+		HasNameTrait:  k.Traits.Name != nil,
 		HasTOTP:       hasTOTP,
 		TOTPCreatedAt: totp.CreatedAt,
 		CreatedAt:     k.CreatedAt,

@@ -379,19 +379,22 @@ func personName(n identity.Name) *gen.PersonName {
 	return out
 }
 
+// toMe never fills the deprecated name: a customer's name is encrypted
+// personal info (NAME-FR-07), not a Kratos trait.
 func toMe(v app.MeView) gen.Me {
 	return gen.Me{
-		Id: v.Principal.IdentityID, Email: openapi_types.Email(v.Principal.Email),
-		EmailVerified: v.Principal.EmailVerified, Name: personName(v.Principal.Name),
+		Id: v.Principal.IdentityID, Email: openapi_types.Email(v.Principal.Email), EmailVerified: v.Principal.EmailVerified,
 		DisplayName: nullableOf(v.Profile.DisplayName), AvatarUrl: nullableOf(v.Profile.AvatarURL),
 		Locale: v.Profile.Locale, CreatedAt: v.Profile.CreatedAt.UTC(),
 	}
 }
 
+// toCustomer never fills the deprecated name (NAME-FR-07); admins see the
+// masked name through the personal-info endpoints.
 func toCustomer(c app.CustomerView) gen.Customer {
 	return gen.Customer{
 		Id: c.Identity.ID, Email: openapi_types.Email(c.Identity.Email), EmailVerified: c.Identity.EmailVerified,
-		Name: personName(c.Identity.Name), State: gen.IdentityState(c.Identity.State),
+		State:       gen.IdentityState(c.Identity.State),
 		DisplayName: nullableOf(c.DisplayName), CreatedAt: c.Identity.CreatedAt.UTC(),
 	}
 }

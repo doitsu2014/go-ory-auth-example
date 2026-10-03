@@ -16,7 +16,6 @@ Me me({bool verified = true, String? displayName = 'An'}) => Me(
   emailVerified: verified,
   locale: 'vi-VN',
   createdAt: DateTime.utc(2026, 10, 3),
-  name: const PersonName(first: 'An', last: 'Nguyen'),
   displayName: displayName,
 );
 
@@ -49,9 +48,33 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('an@example.com'), findsOneWidget);
       expect(find.text('Verified'), findsOneWidget);
-      expect(find.text('An Nguyen'), findsOneWidget);
+      expect(find.text('An'), findsOneWidget); // display name (nickname)
       expect(find.text('vi-VN'), findsOneWidget);
       expect(find.text('Verify now'), findsNothing);
+    });
+
+    testWidgets('no real-name row; personal info is not fetched', (
+      tester,
+    ) async {
+      // The real name is PII: shown only on the protected personal-info
+      // screen. A deprecated `Me.name` (NAME-FR-07) is ignored.
+      final parsed = Me.fromJson({
+        'id': '5d9c2c61-6a1e-4b8f-9b8a-2f9d6f0c1e11',
+        'email': 'an@example.com',
+        'email_verified': true,
+        'locale': 'vi-VN',
+        'created_at': '2026-10-03T00:00:00Z',
+        'name': {'first': 'Kratos', 'last': 'Trait'},
+        'display_name': 'Khách hàng 01',
+      });
+      when(profile.getMe).thenAnswer((_) async => parsed);
+      await pump(tester, const ProfileScreen());
+      await tester.pumpAndSettle();
+      expect(find.text('Khách hàng 01'), findsOneWidget);
+      expect(find.textContaining('Kratos'), findsNothing);
+      expect(find.text('Full name'), findsNothing);
+      expect(find.byKey(const Key('profile.name')), findsNothing);
+      verifyNever(profile.getPersonalInfo);
     });
 
     testWidgets('unverified: badge + verify now routes to verification', (
