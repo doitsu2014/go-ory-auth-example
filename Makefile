@@ -1,6 +1,9 @@
 COMPOSE := docker compose --env-file deploy/compose/.env -f deploy/compose/docker-compose.yml
 
-.PHONY: env infra-up up down reset logs health seed smoke bao-init bao-token kek-rotate keys-rewrap
+.PHONY: dev env infra-up up down reset logs health seed smoke bao-init bao-token kek-rotate keys-rewrap
+
+dev: ## Single entrypoint: build, start, seed the first admin, print URLs (same as ./dev up)
+	./dev up
 
 env: ## Create deploy/compose/.env from the example (local values only)
 	@test -f deploy/compose/.env || cp deploy/compose/.env.example deploy/compose/.env

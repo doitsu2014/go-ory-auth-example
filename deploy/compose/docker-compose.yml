@@ -279,6 +279,32 @@ services:
       openbao-init:
         condition: service_completed_successfully
 
+  admin-web:
+    profiles: ["app"]
+    image: go-ory-auth-example/admin-web:local
+    build:
+      context: ../../apps/admin-web
+      args:
+        VITE_KRATOS_PUBLIC_URL: http://localhost:4433
+        VITE_API_URL: http://localhost:8080
+        VITE_HYDRA_PUBLIC_URL: http://localhost:4444
+    volumes:
+      - ../admin-web/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    # Kratos ui_urls and CORS expect exactly http://localhost:5173.
+    ports:
+      - "127.0.0.1:5173:8080"
+    depends_on:
+      identity-service:
+        condition: service_healthy
+
 networks:
   default:
   # identity-service <-> Hydra only (admin API has no authentication).

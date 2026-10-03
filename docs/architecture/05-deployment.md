@@ -2,7 +2,9 @@
 
 ## 5.1 Local development (Docker Compose)
 
-One command: `make up` (wraps `docker compose -f deploy/compose/docker-compose.yml up -d`).
+One command: `./dev up` (or `make dev`). It creates `.env` from the example,
+runs `docker compose --profile app up -d --build --wait`, creates the first
+super_admin and prints the URLs. `./dev help` lists the other commands.
 
 | Service | Image | Host port | Notes |
 | --- | --- | --- | --- |
@@ -18,7 +20,7 @@ One command: `make up` (wraps `docker compose -f deploy/compose/docker-compose.y
 | `openbao` | `openbao/openbao:2.4.1` | 127.0.0.1:8200 | Transit KEK and blind-index key for PII; `file` storage volume |
 | `openbao-init` | `openbao/openbao:2.4.1` | — | one-shot: init, unseal, keys, policies, app token (re-runs on every `up`) |
 | `identity-service` | built from `services/identity-service` | 8080 public, 8081 webhooks, 9090 ops | `migrate up` then `serve` |
-| `admin-web` | Vite dev server (run on host) | 5173 | `pnpm dev` in `apps/admin-web` |
+| `admin-web` | built from `apps/admin-web` (static build on `nginx-unprivileged`) | 127.0.0.1:5173 | local CSP headers in `deploy/admin-web/nginx.conf`; `./dev web` swaps it for the Vite dev server |
 | mobile | emulator / device (run on host) | — | `flutter run --dart-define-from-file=env/local.json` |
 
 Pin every Ory image to an exact release tag (never `latest`) and upgrade
@@ -37,7 +39,7 @@ Cookies ignore ports, so `localhost:5173` (admin web) and `localhost:4433`
 (Kratos) share the session cookie. Kratos `serve.public.cors` allows
 `http://localhost:5173` with credentials.
 
-Seed: `make seed` runs `identity-service admin bootstrap --email admin@example.local`
+Seed: `./dev up` seeds once; `make seed` runs `identity-service admin bootstrap --email admin@example.local`
 and prints the recovery link (open Mailpit to see emails).
 
 ## 5.2 Production topology
