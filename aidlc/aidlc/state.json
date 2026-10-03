@@ -1,0 +1,24 @@
+{
+  "workflowVersion": "1.0.0",
+  "engineVersion": "0.1.0",
+  "activeIntent": {
+    "id": "261003-t-i-mu",
+    "label": "t-i-mu",
+    "description": "Tôi muốn làm 1 cái project mà trong đó tôi 1 identity service, và 1 website admin react, và 1 mobile app flutter, project này sẽ cho phép tôi dùng Ory Stack để cho phép người dùng đăng nhập vào website admin, hoặc đăng nhập + đăng ký vào ứng dụng mobile app, quản lý bằng database postgres, và ngôn ngữ lập trình back end chính là GO. Vậy vấn đề là tôi nên thiết kế nó thế nào, làm 1 folder docs để chứa hết Architecture, và nguyên tắc thiết kế để xây dựng dự án này trước giúp tôi",
+    "scope": "classic",
+    "space": "default",
+    "createdAt": "2026-10-03T05:28:52.371Z"
+  },
+  "currentStage": "intent-capture",
+  "parked": false,
+  "stages": {
+    "intent-capture": {
+      "status": "active",
+      "attempt": 1,
+      "feedback": [],
+      "updatedAt": "2026-10-03T05:28:52.372Z"
+    }
+  },
+  "startedAt": "2026-10-03T05:28:52.371Z",
+  "updatedAt": "2026-10-03T05:28:52.372Z"
+}

@@ -1,0 +1,3 @@
+{"ts":"2026-10-03T05:28:52.371Z","engineVersion":"0.1.0","event":"INTENT_CREATED","space":"default","intent":"261003-t-i-mu","scope":"classic"}
+{"ts":"2026-10-03T05:28:52.371Z","engineVersion":"0.1.0","event":"SCOPE_SELECTED","space":"default","intent":"261003-t-i-mu","scope":"classic"}
+{"ts":"2026-10-03T05:28:52.372Z","engineVersion":"0.1.0","event":"STAGE_STARTED","space":"default","intent":"261003-t-i-mu","phase":"analyze","stage":"intent-capture"}

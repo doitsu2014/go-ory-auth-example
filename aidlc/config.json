@@ -1,5 +1,5 @@
 {
-  "harness": "pi",
+  "harness": "claude",
   "version": "0.1.0",
   "mode": "yolo"
 }
