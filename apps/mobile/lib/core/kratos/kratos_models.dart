@@ -238,14 +238,14 @@ class KratosIdentity {
   final Json traits;
   final List<VerifiableAddress> verifiableAddresses;
 
-  /// The Kratos login identifier: `traits.login_id` (pseudonym, ADR-0013),
+  /// The Kratos login identifier: `traits.login_id` (opaque handle, ADR-0014),
   /// or the legacy `traits.email` of a not-yet-migrated identity. Used as the
   /// identifier for Kratos calls only; **never displayed** (the contact
   /// shown to the user comes from `GET /v1/me`).
   String get loginId =>
       traits['login_id'] as String? ?? traits['email'] as String? ?? '';
 
-  /// The login identifier (email or phone behind the pseudonym) is verified.
+  /// The login identifier (email or phone behind the handle) is verified.
   bool get loginVerified =>
       loginId.isNotEmpty &&
       verifiableAddresses.any((a) => a.value == loginId && a.verified);

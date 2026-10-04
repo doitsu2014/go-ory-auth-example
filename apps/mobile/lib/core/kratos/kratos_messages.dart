@@ -35,7 +35,7 @@ String kratosMessage(AppLocalizations l10n, UiText m) {
     case 4070006:
       return l10n.kratos4070006;
     // identity-service pre-registration webhook (ADR-0013): an app that
-    // still sends `traits.email`, and an unresolved / unconfirmed pseudonym.
+    // still sends `traits.email`, and a handle identity-service did not store.
     case 4049001:
       return l10n.kratos4049001;
     case 4049002:

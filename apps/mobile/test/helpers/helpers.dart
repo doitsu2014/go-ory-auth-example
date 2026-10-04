@@ -5,7 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_ory_auth_mobile/app/app.dart';
 import 'package:go_ory_auth_mobile/app/providers.dart';
 import 'package:go_ory_auth_mobile/app/routes.dart';
-import 'package:go_ory_auth_mobile/core/identity/login_identifier_client.dart';
+import 'package:go_ory_auth_mobile/core/identity/customer_auth_client.dart';
 import 'package:go_ory_auth_mobile/core/identity/login_input.dart';
 import 'package:go_ory_auth_mobile/core/kratos/kratos_client.dart';
 import 'package:go_ory_auth_mobile/core/kratos/kratos_models.dart';
@@ -20,18 +20,16 @@ class MockKratosClient extends Mock implements KratosClient {}
 
 class MockAuthRepository extends Mock implements AuthRepository {}
 
-class MockLoginIdentifierResolver extends Mock
-    implements LoginIdentifierResolver {}
+class MockCustomerAuthApi extends Mock implements CustomerAuthApi {}
 
-/// A pseudonym in the contract's shape (`^[a-z2-7]{52}@login\.invalid$`).
+/// A Kratos login handle in the schema's shape
+/// (`^[a-z2-7]{52}@login\.invalid$`).
 const pseudonym =
     'l4cwc5fmnvxqxufy7wuuh2mfathke4fvwo3curj5ydaoo3iijsgq@login.invalid';
 
 /// mocktail fallbacks for `any()` on login arguments.
 void registerLoginFallbacks() {
   registerFallbackValue(const LoginInput(type: LoginType.email, value: ''));
-  registerFallbackValue(const PseudonymousLogin(''));
-  registerFallbackValue(LoginPurpose.signIn);
 }
 
 class MockSettingsRepository extends Mock implements SettingsRepository {}
@@ -66,7 +64,7 @@ AuthState authStateOf(WidgetTester tester, Finder finder) =>
     ProviderScope.containerOf(tester.element(finder))
         .read(authControllerProvider);
 
-/// A customer session: `traits.login_id` is the pseudonym (ADR-0013).
+/// A customer session: `traits.login_id` is the handle (ADR-0013/0014).
 KratosSession session({String loginId = pseudonym, bool verified = false}) =>
     KratosSession(
       id: 'sess-1',

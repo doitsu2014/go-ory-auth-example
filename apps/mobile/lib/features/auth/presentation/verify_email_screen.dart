@@ -18,9 +18,9 @@ import 'package:go_router/go_router.dart';
 /// `continue_with: show_verification_ui` when Kratos sent one; otherwise
 /// starts a native verification flow, which sends a fresh code.
 ///
-/// Kratos is addressed with the session's pseudonym (`loginId`); the contact
-/// shown to the user comes from `GET /v1/me` (`login.value`). The pseudonym
-/// is never displayed (PLI-FR-08).
+/// Kratos is addressed with the session's own handle (`loginId`); the
+/// contact shown to the user comes from `GET /v1/me` (`login.value`). The
+/// handle is never displayed (PLI-FR-08).
 class VerifyEmailScreen extends ConsumerStatefulWidget {
   const VerifyEmailScreen({super.key});
 
@@ -34,14 +34,14 @@ class _VerifyEmailScreenState extends ConsumerState<VerifyEmailScreen>
   final _code = TextEditingController();
   String? _providedFlowId;
 
-  /// The session's pseudonym. Without a session (or a session without a
+  /// The session's handle. Without a session (or a session without a
   /// login id) Kratos must not be called with an empty identifier: this is
   /// treated as a lost session ([UnauthenticatedFailure] → wipe → sign-in).
-  LoginTarget get _target {
+  String get _loginId {
     final s = ref.read(authControllerProvider);
     final loginId = s is Authenticated ? s.loginId : '';
     if (loginId.isEmpty) throw const UnauthenticatedFailure();
-    return PseudonymousLogin(loginId);
+    return loginId;
   }
 
   @override
@@ -51,7 +51,9 @@ class _VerifyEmailScreenState extends ConsumerState<VerifyEmailScreen>
       _providedFlowId = null;
       return Future.value(KratosFlow(id: provided, state: 'sent_email'));
     }
-    return ref.read(authRepositoryProvider).startVerification(_target);
+    return ref
+        .read(authRepositoryProvider)
+        .startVerification(loginId: _loginId);
   };
 
   @override
@@ -80,7 +82,7 @@ class _VerifyEmailScreenState extends ConsumerState<VerifyEmailScreen>
   Future<void> _resend() => runSubmit((flow) async {
     final result = await ref
         .read(authRepositoryProvider)
-        .resendVerificationCode(flowId: flow!.id, target: _target);
+        .resendVerificationCode(flowId: flow!.id, loginId: _loginId);
     setState(() => this.flow = result);
   });
 

@@ -79,8 +79,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
 
   Future<void> _reauthenticate() => runSubmit((_) async {
     final auth = ref.read(authControllerProvider);
-    // PLI-FR-09: the session's login_id is already the pseudonym; the
-    // customer does not re-type the email / phone and nothing is resolved.
+    // PLI-FR-09: the session's login_id is the account's own handle; the
+    // customer does not re-type the email / phone.
     final loginId = auth is Authenticated ? auth.loginId : '';
     final settings = ref.read(settingsRepositoryProvider);
     try {

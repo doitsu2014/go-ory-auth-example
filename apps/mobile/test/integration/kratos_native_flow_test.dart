@@ -1,9 +1,9 @@
 // Real-stack test against the local compose stack (Kratos public :4433,
-// Mailpit :8025, identity-service :8080). Every flow that takes an
-// identifier resolves it first (`POST /v1/auth/identifiers`, ADR-0013), so
-// identity-service is required. Codes for phone logins arrive through the
-// local SMS sink (Mailpit, `<E.164 digits>@sms.local`). Plain `test` (no
-// widget binding) so real HTTP works. Excluded by default; run with:
+// Mailpit :8025, identity-service :8080). Sign-in, registration and the
+// start of recovery go through identity-service (`POST /v1/auth/*`,
+// ADR-0014), so identity-service is required. Codes for phone logins arrive
+// through the local SMS sink (Mailpit, `<E.164 digits>@sms.local`). Plain
+// `test` (no widget binding) so real HTTP works. Excluded by default; run with:
 //
 //   flutter test --tags integration
 //
@@ -15,13 +15,12 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:dio/dio.dart';
-import 'package:go_ory_auth_mobile/core/identity/login_identifier_client.dart';
+import 'package:go_ory_auth_mobile/core/identity/customer_auth_client.dart';
 import 'package:go_ory_auth_mobile/core/identity/login_input.dart';
 import 'package:go_ory_auth_mobile/core/kratos/ory_kratos_client.dart';
 import 'package:go_ory_auth_mobile/core/logging/app_logger.dart';
 import 'package:go_ory_auth_mobile/core/network/api_client.dart';
 import 'package:go_ory_auth_mobile/core/network/app_failure.dart';
-import 'package:go_ory_auth_mobile/core/storage/login_identifier_cache.dart';
 import 'package:go_ory_auth_mobile/core/storage/secure_token_store.dart';
 import 'package:go_ory_auth_mobile/features/auth/data/auth_repository.dart';
 import 'package:go_ory_auth_mobile/features/profile/data/profile_repository.dart';
@@ -115,18 +114,14 @@ void main() {
   final logLines = <String>[];
   final logger = AppLogger(sink: (_, m) => logLines.add(m));
   final kratos = OryKratosClient(baseUrl: kratosUrl);
-  final resolver = HttpLoginIdentifierResolver(
+  final customerAuth = HttpCustomerAuthApi(
     buildPublicApiDio(baseUrl: apiUrl, logger: logger),
   );
   late InMemoryTokenStore tokens;
   late AuthRepository auth;
 
-  AuthRepository newAuth(TokenStore store) => AuthRepository(
-    kratos: kratos,
-    tokens: store,
-    resolver: resolver,
-    loginCache: InMemoryLoginIdentifierCache(),
-  );
+  AuthRepository newAuth(TokenStore store) =>
+      AuthRepository(kratos: kratos, tokens: store, customerAuth: customerAuth);
 
   final email =
       'mobile-it-${DateTime.now().millisecondsSinceEpoch}-'
@@ -143,18 +138,21 @@ void main() {
 
   test('registration -> token -> verify (Mailpit code) -> toSession', () async {
     final t0 = DateTime.now().toUtc().subtract(const Duration(seconds: 2));
-    final regFlow = await auth.startRegistration();
-    expect(regFlow.type, 'api');
-    expect(regFlow.node('traits.login_id'), isNotNull);
-
-    final outcome = await auth.register(
-      flowId: regFlow.id,
-      login: emailLogin,
-      password: password,
+    // A weak password: Kratos's rejection comes back as message ids only.
+    await expectLater(
+      auth.register(login: emailLogin, password: 'short'),
+      throwsA(
+        isA<FlowValidationFailure>().having(
+          (f) => f.flow.messagesFor(AuthFlowFields.password).map((m) => m.id),
+          'ids',
+          contains(4000032),
+        ),
+      ),
     );
+    final outcome = await auth.register(login: emailLogin, password: password);
     final token = await tokens.read();
     expect(token, startsWith('ory_st_'));
-    // Kratos holds the pseudonym only (ADR-0013).
+    // Kratos holds the opaque handle only (ADR-0013/0014).
     expect(outcome.session.identity.loginId, matches(_pseudonym));
     expect(outcome.session.identity.traits.containsKey('email'), isFalse);
     expect(outcome.session.identity.schemaId, 'customer');
@@ -167,7 +165,7 @@ void main() {
     if (verificationFlowId == null) {
       after = DateTime.now().toUtc().subtract(const Duration(seconds: 1));
       final vf = await auth.startVerification(
-        PseudonymousLogin(outcome.session.identity.loginId),
+        loginId: outcome.session.identity.loginId,
       );
       expect(vf.state, 'sent_email');
       verificationFlowId = vf.id;
@@ -208,7 +206,7 @@ void main() {
     'settings flow: weak password rejected by Kratos, strong one accepted',
     () async {
       final settings = SettingsRepository(kratos: kratos, tokens: tokens);
-      // PLI-FR-09: re-authentication uses the session's pseudonym as is.
+      // PLI-FR-09: re-authentication uses the session's handle as is.
       final current = await auth.refreshSession();
       await settings.reauthenticate(
         identifier: current.identity.loginId,
@@ -237,11 +235,10 @@ void main() {
 
   test('recovery (code) -> privileged session -> new password', () async {
     final t0 = DateTime.now().toUtc().subtract(const Duration(seconds: 1));
-    final flow = await auth.startRecovery();
-    final sent = await auth.requestRecoveryCode(
-      flowId: flow.id,
+    final flow = await auth.requestRecoveryCode(
       login: LoginInput(type: LoginType.email, value: email.toUpperCase()),
     );
+    final sent = flow;
     expect(sent.state, 'sent_email');
     // Codes travel through the Kratos http courier, so an earlier
     // verification mail can land after t0: accept only a recovery message.
@@ -279,9 +276,18 @@ void main() {
       }
       final loginTokens = InMemoryTokenStore();
       final loginRepo = newAuth(loginTokens);
-      final flow = await loginRepo.startLogin();
+      // Wrong password: rejected with Kratos's id, never a handle.
+      await expectLater(
+        loginRepo.login(login: emailLogin, password: 'not-the-password'),
+        throwsA(
+          isA<FlowValidationFailure>().having(
+            (f) => f.flow.messages.map((m) => m.id),
+            'ids',
+            contains(4000006),
+          ),
+        ),
+      );
       final session = await loginRepo.login(
-        flowId: flow.id,
         login: emailLogin,
         password: password,
       );
@@ -315,12 +321,7 @@ void main() {
       }
       final loginTokens = InMemoryTokenStore();
       final loginRepo = newAuth(loginTokens);
-      final flow = await loginRepo.startLogin();
-      await loginRepo.login(
-        flowId: flow.id,
-        login: emailLogin,
-        password: password,
-      );
+      await loginRepo.login(login: emailLogin, password: password);
       final profile = ProfileRepository(
         buildApiDio(
           baseUrl: apiUrl,
@@ -408,9 +409,7 @@ void main() {
     final phonePassword = strongPassword();
 
     final t0 = DateTime.now().toUtc().subtract(const Duration(seconds: 2));
-    final reg = await phoneAuth.startRegistration();
     final outcome = await phoneAuth.register(
-      flowId: reg.id,
       login: LoginInput(type: LoginType.phone, value: phone),
       password: phonePassword,
     );
@@ -418,7 +417,7 @@ void main() {
     var flowId = outcome.verificationFlowId;
     if (flowId == null) {
       final vf = await phoneAuth.startVerification(
-        PseudonymousLogin(outcome.session.identity.loginId),
+        loginId: outcome.session.identity.loginId,
       );
       flowId = vf.id;
     }
@@ -427,9 +426,7 @@ void main() {
     expect(verified.state, 'passed_challenge');
     await phoneAuth.logout();
 
-    final login = await phoneAuth.startLogin();
     final session = await phoneAuth.login(
-      flowId: login.id,
       login: LoginInput(type: LoginType.phone, value: national),
       password: phonePassword,
     );
@@ -453,9 +450,7 @@ void main() {
     await phoneAuth.logout();
 
     final t1 = DateTime.now().toUtc().subtract(const Duration(seconds: 1));
-    final rec = await phoneAuth.startRecovery();
     final sent = await phoneAuth.requestRecoveryCode(
-      flowId: rec.id,
       login: LoginInput(type: LoginType.phone, value: national),
     );
     expect(sent.state, 'sent_email');

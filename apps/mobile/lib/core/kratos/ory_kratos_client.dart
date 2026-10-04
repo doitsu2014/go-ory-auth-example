@@ -1,4 +1,3 @@
-import 'package:built_value/json_object.dart';
 import 'package:built_value/serializer.dart';
 import 'package:dio/dio.dart';
 import 'package:go_ory_auth_mobile/core/kratos/kratos_client.dart';
@@ -73,45 +72,6 @@ class OryKratosClient implements KratosClient {
   }
 
   KratosFlow _flow(Json j) => KratosFlow.fromJson(j);
-
-  @override
-  Future<KratosFlow> createRegistrationFlow() => _call(
-    _api.createNativeRegistrationFlow,
-    const FullType(RegistrationFlow),
-    _flow,
-  );
-
-  @override
-  Future<NativeAuthResult> submitRegistration({
-    required String flowId,
-    required String loginId,
-    required String password,
-  }) {
-    // The customer schema has only `login_id` (the pseudonym from
-    // `POST /v1/auth/identifiers`, ADR-0013); the name is personal info
-    // (identity-service `PUT /v1/me/personal-info`), never a Kratos trait.
-    final body = UpdateRegistrationFlowBody(
-      (b) => b
-        ..oneOf = OneOfDynamic(
-          typeIndex: 0,
-          types: const [UpdateRegistrationFlowWithPasswordMethod],
-          value: UpdateRegistrationFlowWithPasswordMethod(
-            (p) => p
-              ..method = 'password'
-              ..password = password
-              ..traits = JsonObject(<String, Object>{'login_id': loginId}),
-          ),
-        ),
-    );
-    return _call(
-      () => _api.updateRegistrationFlow(
-        flow: flowId,
-        updateRegistrationFlowBody: body,
-      ),
-      const FullType(SuccessfulNativeRegistration),
-      NativeAuthResult.fromJson,
-    );
-  }
 
   @override
   Future<KratosFlow> createLoginFlow({
@@ -189,36 +149,6 @@ class OryKratosClient implements KratosClient {
         updateVerificationFlowBody: body,
       ),
       const FullType(VerificationFlow),
-      _flow,
-    );
-  }
-
-  @override
-  Future<KratosFlow> createRecoveryFlow() =>
-      _call(_api.createNativeRecoveryFlow, const FullType(RecoveryFlow), _flow);
-
-  @override
-  Future<KratosFlow> submitRecovery({
-    required String flowId,
-    String? email,
-    String? code,
-  }) {
-    final body = UpdateRecoveryFlowBody(
-      (b) => b
-        ..oneOf = OneOfDynamic(
-          typeIndex: 0,
-          types: const [UpdateRecoveryFlowWithCodeMethod],
-          value: UpdateRecoveryFlowWithCodeMethod(
-            (p) => p
-              ..method = UpdateRecoveryFlowWithCodeMethodMethodEnum.code
-              ..email = email
-              ..code = code,
-          ),
-        ),
-    );
-    return _call(
-      () => _api.updateRecoveryFlow(flow: flowId, updateRecoveryFlowBody: body),
-      const FullType(RecoveryFlow),
       _flow,
     );
   }

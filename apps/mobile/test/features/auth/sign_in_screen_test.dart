@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_ory_auth_mobile/core/identity/customer_auth_client.dart';
 import 'package:go_ory_auth_mobile/core/identity/login_input.dart';
 import 'package:go_ory_auth_mobile/core/kratos/kratos_models.dart';
 import 'package:go_ory_auth_mobile/core/network/app_failure.dart';
@@ -17,7 +18,6 @@ void main() {
 
   setUp(() {
     repo = MockAuthRepository();
-    when(repo.startLogin).thenAnswer((_) async => flowWith(id: 'login-1'));
   });
 
   Future<void> fill(
@@ -34,14 +34,13 @@ void main() {
   void stubLogin(Future<KratosSession> Function() answer) {
     when(
       () => repo.login(
-        flowId: any(named: 'flowId'),
         login: any(named: 'login'),
         password: any(named: 'password'),
       ),
     ).thenAnswer((_) => answer());
   }
 
-  testWidgets('idle: creates a native login flow and shows the form', (
+  testWidgets('idle: shows the form; no Kratos flow on the device', (
     tester,
   ) async {
     await pumpScreen(
@@ -49,7 +48,12 @@ void main() {
       const SignInScreen(),
       overrides: authOverrides(repo),
     );
-    verify(repo.startLogin).called(1);
+    verifyNever(
+      () => repo.login(
+        login: any(named: 'login'),
+        password: any(named: 'password'),
+      ),
+    );
     expect(find.byKey(const Key('signIn.loginType')), findsOneWidget);
     expect(find.byKey(const Key('signIn.login')), findsOneWidget);
     expect(find.byKey(const Key('signIn.password')), findsOneWidget);
@@ -80,16 +84,16 @@ void main() {
     await tester.pumpAndSettle();
   });
 
-  testWidgets('field error: node message rendered under the field', (
+  testWidgets('field error: login node message rendered under the field', (
     tester,
   ) async {
     stubLogin(
       () => Future.error(
         FlowValidationFailure(
           flowWith(
-            id: 'login-1',
+            id: '',
             nodeMessages: {
-              'identifier': [err(4000002, 'Property identifier is missing.')],
+              AuthFlowFields.login: [err(4000002, '')],
             },
           ),
         ),
@@ -104,19 +108,12 @@ void main() {
     await tester.tap(find.byKey(const Key('signIn.submit')));
     await tester.pumpAndSettle();
     expect(find.text('This field is required.'), findsOneWidget);
-    // Same flow re-rendered: no new flow created.
-    verify(repo.startLogin).called(1);
   });
 
   testWidgets('global error: ui.messages mapped by id', (tester) async {
     stubLogin(
       () => Future.error(
-        FlowValidationFailure(
-          flowWith(
-            id: 'login-1',
-            messages: [err(4000006, 'The provided credentials are invalid')],
-          ),
-        ),
+        FlowValidationFailure(flowWith(id: '', messages: [err(4000006, '')])),
       ),
     );
     await pumpScreen(
@@ -158,7 +155,6 @@ void main() {
       await tester.pumpAndSettle();
       verify(
         () => repo.login(
-          flowId: 'login-1',
           login: LoginInput(type: type, value: typed),
           password: 'correct horse battery',
         ),
@@ -198,7 +194,6 @@ void main() {
     expect(find.text('Enter a valid email address.'), findsOneWidget);
     verifyNever(
       () => repo.login(
-        flowId: any(named: 'flowId'),
         login: any(named: 'login'),
         password: any(named: 'password'),
       ),
@@ -210,9 +205,7 @@ void main() {
     expect(find.text('Enter a valid email address.'), findsNothing);
   });
 
-  testWidgets('resolver 503: service unavailable banner with retry', (
-    tester,
-  ) async {
+  testWidgets('503: service unavailable banner with retry', (tester) async {
     stubLogin(
       () =>
           Future.error(const ApiFailure('dependency_unavailable', status: 503)),
@@ -234,7 +227,7 @@ void main() {
     expect(find.text('Retry'), findsOneWidget);
   });
 
-  testWidgets('resolver 429 without Retry-After: generic rate-limit text', (
+  testWidgets('429 without Retry-After: generic rate-limit text', (
     tester,
   ) async {
     stubLogin(
@@ -268,28 +261,12 @@ void main() {
     expect(find.text('Retry'), findsOneWidget);
   });
 
-  testWidgets('flow load network error clears after a successful retry', (
-    tester,
-  ) async {
+  testWidgets('retry after a network error submits again', (tester) async {
     var calls = 0;
-    when(repo.startLogin).thenAnswer((_) async {
+    stubLogin(() async {
       if (calls++ == 0) throw const NetworkFailure();
-      return flowWith(id: 'login-2');
+      return session();
     });
-    await pumpScreen(
-      tester,
-      const SignInScreen(),
-      overrides: authOverrides(repo),
-    );
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('flow.failure')), findsOneWidget);
-    await tester.tap(find.text('Retry'));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('flow.failure')), findsNothing);
-  });
-
-  testWidgets('410 expired: restarts the flow', (tester) async {
-    stubLogin(() => Future.error(const FlowExpiredFailure()));
     await pumpScreen(
       tester,
       const SignInScreen(),
@@ -298,7 +275,10 @@ void main() {
     await fill(tester);
     await tester.tap(find.byKey(const Key('signIn.submit')));
     await tester.pumpAndSettle();
-    verify(repo.startLogin).called(2);
-    expect(find.textContaining('expired'), findsOneWidget);
+    expect(find.byKey(const Key('flow.failure')), findsOneWidget);
+    await tester.tap(find.text('Retry'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('flow.failure')), findsNothing);
+    expect(calls, 2);
   });
 }

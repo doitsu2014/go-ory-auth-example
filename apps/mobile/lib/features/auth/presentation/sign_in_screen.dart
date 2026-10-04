@@ -1,9 +1,8 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_ory_auth_mobile/app/providers.dart';
 import 'package:go_ory_auth_mobile/app/routes.dart';
+import 'package:go_ory_auth_mobile/core/identity/customer_auth_client.dart';
 import 'package:go_ory_auth_mobile/core/identity/login_input.dart';
 import 'package:go_ory_auth_mobile/core/kratos/kratos_models.dart';
 import 'package:go_ory_auth_mobile/features/auth/presentation/auth_controller.dart';
@@ -12,9 +11,10 @@ import 'package:go_ory_auth_mobile/features/auth/presentation/widgets/login_iden
 import 'package:go_ory_auth_mobile/l10n/gen/app_localizations.dart';
 import 'package:go_router/go_router.dart';
 
-/// Native login flow: `createNativeLoginFlow` → `{method: password,
-/// identifier, password}` where `identifier` is the pseudonym resolved from
-/// the email / phone number (ADR-0013, PLI-FR-08).
+/// Sign-in with email / phone number and password: one call to
+/// identity-service, which runs the Kratos native login flow with the
+/// account's opaque handle (ADR-0014, PLX-FR-01). Rejections come back as
+/// Kratos message ids on the `login`, `password` and `form` nodes.
 class SignInScreen extends ConsumerStatefulWidget {
   const SignInScreen({super.key});
 
@@ -24,7 +24,10 @@ class SignInScreen extends ConsumerStatefulWidget {
 
 class _SignInScreenState extends ConsumerState<SignInScreen>
     with FlowFormMixin {
-  static const _bound = {'identifier', 'password', 'csrf_token', 'method'};
+  static const Set<String> _bound = {
+    AuthFlowFields.login,
+    AuthFlowFields.password,
+  };
   final _login = TextEditingController();
   final _password = TextEditingController();
   LoginType _loginType = LoginType.email;
@@ -32,15 +35,9 @@ class _SignInScreenState extends ConsumerState<SignInScreen>
   /// Client-side format check result (UX only).
   String? _loginCode;
 
+  /// No Kratos flow on the device: identity-service creates it.
   @override
-  Future<KratosFlow> Function() get createFlow =>
-      ref.read(authRepositoryProvider).startLogin;
-
-  @override
-  void initState() {
-    super.initState();
-    unawaited(loadFlow());
-  }
+  Future<KratosFlow> Function()? get createFlow => null;
 
   @override
   void dispose() {
@@ -54,10 +51,10 @@ class _SignInScreenState extends ConsumerState<SignInScreen>
     final code = login.validate();
     setState(() => _loginCode = code);
     if (code != null) return;
-    await runSubmit((flow) async {
+    await runSubmit((_) async {
       final session = await ref
           .read(authRepositoryProvider)
-          .login(flowId: flow!.id, login: login, password: _password.text);
+          .login(login: login, password: _password.text);
       ref.read(authControllerProvider.notifier).signedIn(session);
     });
   }
@@ -75,7 +72,7 @@ class _SignInScreenState extends ConsumerState<SignInScreen>
             failure: startup,
             onRetry: () => ref.read(authControllerProvider.notifier).restore(),
           ),
-        FailureBanner(failure: failure, onRetry: loadFlow),
+        FailureBanner(failure: failure, onRetry: _submit),
         FlowMessages(messages: globalMessages(_bound)),
         LoginIdentifierField(
           keyPrefix: 'signIn',
@@ -95,7 +92,7 @@ class _SignInScreenState extends ConsumerState<SignInScreen>
             _loginType,
             localCode: _loginCode,
             failure: failure,
-            kratosError: fieldError(context, 'identifier'),
+            kratosError: fieldError(context, AuthFlowFields.login),
           ),
         ),
         TextField(
@@ -106,7 +103,7 @@ class _SignInScreenState extends ConsumerState<SignInScreen>
           onSubmitted: (_) => _submit(),
           decoration: InputDecoration(
             labelText: l10n.password,
-            errorText: fieldError(context, 'password'),
+            errorText: fieldError(context, AuthFlowFields.password),
           ),
         ),
         SubmitButton(

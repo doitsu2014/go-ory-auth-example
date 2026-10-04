@@ -30,7 +30,7 @@ void main() {
   group('VerifyEmailScreen', () {
     late MockAuthRepository repo;
     late MockProfileRepository profile;
-    const sessionLogin = PseudonymousLogin(pseudonym);
+    const sessionLogin = pseudonym;
 
     setUp(() {
       repo = MockAuthRepository();
@@ -62,7 +62,9 @@ void main() {
           overrides: overrides(flowId: 'vf-1'),
         );
         await tester.pumpAndSettle();
-        verifyNever(() => repo.startVerification(any()));
+        verifyNever(
+          () => repo.startVerification(loginId: any(named: 'loginId')),
+        );
         expect(
           find.text('Enter the code we emailed to an@example.com.'),
           findsOneWidget,
@@ -121,7 +123,7 @@ void main() {
         ],
       );
       await tester.pumpAndSettle();
-      verifyNever(() => repo.startVerification(any()));
+      verifyNever(() => repo.startVerification(loginId: any(named: 'loginId')));
       verify(repo.forget).called(1);
       expect(
         authStateOf(tester, find.byType(VerifyEmailScreen)),
@@ -132,7 +134,7 @@ void main() {
     testWidgets(
       'idle without continue_with: starts a verification flow (sends code)',
       (tester) async {
-        when(() => repo.startVerification(sessionLogin)).thenAnswer(
+        when(() => repo.startVerification(loginId: sessionLogin)).thenAnswer(
           (_) async => flowWith(
             id: 'vf-2',
             state: 'sent_email',
@@ -145,7 +147,7 @@ void main() {
           overrides: overrides(),
         );
         await tester.pumpAndSettle();
-        verify(() => repo.startVerification(sessionLogin)).called(1);
+        verify(() => repo.startVerification(loginId: sessionLogin)).called(1);
         expect(find.text('We sent you a verification code.'), findsOneWidget);
       },
     );
@@ -157,7 +159,8 @@ void main() {
       when(() => repo.verify(flowId: 'vf-1', code: '000000'))
           .thenAnswer((_) => pending.future);
       when(
-        () => repo.resendVerificationCode(flowId: 'vf-1', target: sessionLogin),
+        () =>
+            repo.resendVerificationCode(flowId: 'vf-1', loginId: sessionLogin),
       ).thenAnswer(
         (_) async => flowWith(
           id: 'vf-1',
@@ -188,7 +191,8 @@ void main() {
       await tester.tap(find.byKey(const Key('verify.resend')));
       await tester.pumpAndSettle();
       verify(
-        () => repo.resendVerificationCode(flowId: 'vf-1', target: sessionLogin),
+        () =>
+            repo.resendVerificationCode(flowId: 'vf-1', loginId: sessionLogin),
       ).called(1);
       expect(find.text('We sent you a verification code.'), findsOneWidget);
     });
@@ -216,7 +220,6 @@ void main() {
 
     setUp(() {
       repo = MockAuthRepository();
-      when(repo.startRecovery).thenAnswer((_) async => flowWith(id: 'rf-1'));
       when(() => repo.abandonRecovery(any())).thenAnswer((_) async {});
     });
 
@@ -226,8 +229,8 @@ void main() {
         const ForgotPasswordScreen(),
         overrides: authOverrides(repo),
       );
-      verify(repo.startRecovery).called(1);
       expect(find.byKey(const Key('recovery.login')), findsOneWidget);
+      verifyNever(() => repo.requestRecoveryCode(login: any(named: 'login')));
     });
 
     testWidgets('local format error clears when the field changes', (
@@ -242,12 +245,7 @@ void main() {
       await tester.tap(find.byKey(const Key('recovery.send')));
       await tester.pumpAndSettle();
       expect(find.text('Enter a valid email address.'), findsOneWidget);
-      verifyNever(
-        () => repo.requestRecoveryCode(
-          flowId: any(named: 'flowId'),
-          login: any(named: 'login'),
-        ),
-      );
+      verifyNever(() => repo.requestRecoveryCode(login: any(named: 'login')));
       await tester.enterText(find.byKey(const Key('recovery.login')), 'nope@');
       await tester.pump();
       expect(find.text('Enter a valid email address.'), findsNothing);
@@ -258,7 +256,6 @@ void main() {
       (tester) async {
         when(
           () => repo.requestRecoveryCode(
-            flowId: 'rf-1',
             login: const LoginInput(
               type: LoginType.email,
               value: 'an@example.com',
@@ -345,12 +342,8 @@ void main() {
         settingsFlowId: 'sf-1',
         sessionToken: 'ory_st_priv',
       );
-      when(
-        () => repo.requestRecoveryCode(
-          flowId: 'rf-1',
-          login: any(named: 'login'),
-        ),
-      ).thenAnswer((_) async => flowWith(id: 'rf-1', state: 'sent_email'));
+      when(() => repo.requestRecoveryCode(login: any(named: 'login')))
+          .thenAnswer((_) async => flowWith(id: 'rf-1', state: 'sent_email'));
       when(() => repo.submitRecoveryCode(flowId: 'rf-1', code: '123456'))
           .thenAnswer((_) async => grant);
       when(
@@ -393,12 +386,8 @@ void main() {
         settingsFlowId: 'sf-1',
         sessionToken: 'ory_st_priv',
       );
-      when(
-        () => repo.requestRecoveryCode(
-          flowId: 'rf-1',
-          login: any(named: 'login'),
-        ),
-      ).thenAnswer((_) async => flowWith(id: 'rf-1', state: 'sent_email'));
+      when(() => repo.requestRecoveryCode(login: any(named: 'login')))
+          .thenAnswer((_) async => flowWith(id: 'rf-1', state: 'sent_email'));
       when(
         () => repo.submitRecoveryCode(
           flowId: 'rf-1',
@@ -427,12 +416,8 @@ void main() {
     testWidgets('new password field error (breached) from settings flow', (
       tester,
     ) async {
-      when(
-        () => repo.requestRecoveryCode(
-          flowId: 'rf-1',
-          login: any(named: 'login'),
-        ),
-      ).thenAnswer((_) async => flowWith(id: 'rf-1', state: 'sent_email'));
+      when(() => repo.requestRecoveryCode(login: any(named: 'login')))
+          .thenAnswer((_) async => flowWith(id: 'rf-1', state: 'sent_email'));
       when(
         () => repo.submitRecoveryCode(
           flowId: 'rf-1',
@@ -488,12 +473,8 @@ void main() {
     });
 
     testWidgets('global error: recovery session unavailable', (tester) async {
-      when(
-        () => repo.requestRecoveryCode(
-          flowId: 'rf-1',
-          login: any(named: 'login'),
-        ),
-      ).thenAnswer((_) async => flowWith(id: 'rf-1', state: 'sent_email'));
+      when(() => repo.requestRecoveryCode(login: any(named: 'login')))
+          .thenAnswer((_) async => flowWith(id: 'rf-1', state: 'sent_email'));
       when(
         () => repo.submitRecoveryCode(
           flowId: 'rf-1',
@@ -515,6 +496,34 @@ void main() {
       await tester.tap(find.byKey(const Key('recovery.submitCode')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('flow.failure')), findsOneWidget);
+    });
+
+    testWidgets('expired recovery flow at the code step: back to the email '
+        'step', (tester) async {
+      when(() => repo.requestRecoveryCode(login: any(named: 'login')))
+          .thenAnswer((_) async => flowWith(id: 'rf-1', state: 'sent_email'));
+      when(
+        () => repo.submitRecoveryCode(
+          flowId: 'rf-1',
+          code: any(named: 'code'),
+        ),
+      ).thenThrow(const FlowExpiredFailure());
+      await pumpScreen(
+        tester,
+        const ForgotPasswordScreen(),
+        overrides: authOverrides(repo),
+      );
+      await tester.enterText(
+        find.byKey(const Key('recovery.login')),
+        'an@example.com',
+      );
+      await tester.tap(find.byKey(const Key('recovery.send')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('recovery.code')), '123456');
+      await tester.tap(find.byKey(const Key('recovery.submitCode')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('recovery.login')), findsOneWidget);
+      expect(find.textContaining('expired'), findsOneWidget);
     });
   });
 

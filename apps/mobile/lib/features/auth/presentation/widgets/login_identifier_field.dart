@@ -105,22 +105,22 @@ String loginFieldMessage(AppLocalizations l10n, LoginType type, String code) =>
       _ => l10n.validationFailed,
     };
 
-/// Field error code from a resolver `422 validation_failed` (fields `value`,
-/// `type`, `purpose`), or null.
-String? resolverFieldCode(AppFailure? failure) {
+/// Field error code on the login from an identity-service
+/// `422 validation_failed` (fields `login.value`, `login.type`), or null.
+String? loginFieldCode(AppFailure? failure) {
   if (failure is! ApiFailure || failure.code != 'validation_failed') {
     return null;
   }
   for (final e in failure.fieldErrors) {
-    if (e.field == 'value' || e.field == 'type' || e.field == 'purpose') {
+    if (e.field == 'login.value' || e.field == 'login.type') {
       return e.code;
     }
   }
   return null;
 }
 
-/// Error text for the login field: the local format check first, then the
-/// resolver's field error, then Kratos' node messages ([kratosError]).
+/// Error text for the login field: the local format check first, then
+/// identity-service's field error, then Kratos' messages ([kratosError]).
 String? loginErrorText(
   AppLocalizations l10n,
   LoginType type, {
@@ -128,7 +128,7 @@ String? loginErrorText(
   AppFailure? failure,
   String? kratosError,
 }) {
-  final code = localCode ?? resolverFieldCode(failure);
+  final code = localCode ?? loginFieldCode(failure);
   if (code != null) return loginFieldMessage(l10n, type, code);
   return kratosError;
 }

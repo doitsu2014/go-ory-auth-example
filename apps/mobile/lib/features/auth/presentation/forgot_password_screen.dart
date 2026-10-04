@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_ory_auth_mobile/app/providers.dart';
+import 'package:go_ory_auth_mobile/core/identity/customer_auth_client.dart';
 import 'package:go_ory_auth_mobile/core/identity/login_input.dart';
 import 'package:go_ory_auth_mobile/core/kratos/kratos_models.dart';
 import 'package:go_ory_auth_mobile/features/auth/data/auth_repository.dart';
@@ -12,9 +13,11 @@ import 'package:go_ory_auth_mobile/l10n/gen/app_localizations.dart';
 
 enum RecoveryStep { email, code, newPassword }
 
-/// Native recovery flow (code): email / phone (resolved to the pseudonym,
-/// sent as Kratos' `email`) → code → privileged settings flow
-/// (`continue_with`) → new password → signed in.
+/// Recovery by code: email / phone → identity-service starts the Kratos
+/// native recovery flow with the account's handle (or a decoy, same answer,
+/// ADR-0014) → code → privileged settings flow (`continue_with`) → new
+/// password → signed in. The code and the new password go to Kratos
+/// directly.
 class ForgotPasswordScreen extends ConsumerStatefulWidget {
   const ForgotPasswordScreen({super.key});
 
@@ -25,7 +28,13 @@ class ForgotPasswordScreen extends ConsumerStatefulWidget {
 
 class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen>
     with FlowFormMixin {
-  static const _bound = {'email', 'code', 'password', 'csrf_token', 'method'};
+  static const Set<String> _bound = {
+    AuthFlowFields.login,
+    'code',
+    'password',
+    'csrf_token',
+    'method',
+  };
   final _login = TextEditingController();
   final _code = TextEditingController();
   LoginType _loginType = LoginType.email;
@@ -38,20 +47,15 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen>
   bool _completed = false;
   late final AuthRepository _repo;
 
+  /// The flow is started by identity-service at the email step; an expired
+  /// flow (code step) restarts there (see [build]).
   @override
-  Future<KratosFlow> Function() get createFlow => () {
-    // A new recovery flow always restarts at the email step.
-    if (mounted && _step != RecoveryStep.email) {
-      setState(() => _step = RecoveryStep.email);
-    }
-    return ref.read(authRepositoryProvider).startRecovery();
-  };
+  Future<KratosFlow> Function()? get createFlow => null;
 
   @override
   void initState() {
     super.initState();
     _repo = ref.read(authRepositoryProvider);
-    unawaited(loadFlow());
   }
 
   @override
@@ -69,12 +73,12 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen>
     final code = login.validate();
     setState(() => _loginCode = code);
     if (code != null) return;
-    await runSubmit((flow) async {
+    await runSubmit((_) async {
       final result = await ref
           .read(authRepositoryProvider)
-          .requestRecoveryCode(flowId: flow!.id, login: login);
+          .requestRecoveryCode(login: login);
       setState(() {
-        this.flow = result;
+        flow = result;
         _step = RecoveryStep.code;
       });
     });
@@ -102,7 +106,12 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen>
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
-    final step = switch (_step) {
+    // No flow before the email step, or after the recovery flow expired:
+    // start again with the email / phone number.
+    final current = flow == null && _step == RecoveryStep.code
+        ? RecoveryStep.email
+        : _step;
+    final step = switch (current) {
       RecoveryStep.email => [
         Text(l10n.recoveryEmailBody),
         LoginIdentifierField(
@@ -122,7 +131,7 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen>
             _loginType,
             localCode: _loginCode,
             failure: failure,
-            kratosError: fieldError(context, 'email'),
+            kratosError: fieldError(context, AuthFlowFields.login),
           ),
         ),
         SubmitButton(
@@ -174,7 +183,7 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen>
     return FormPage(
       title: l10n.recoveryTitle,
       children: [
-        FailureBanner(failure: failure, onRetry: loadFlow),
+        FailureBanner(failure: failure),
         FlowMessages(messages: globalMessages(_bound)),
         ...step,
       ],

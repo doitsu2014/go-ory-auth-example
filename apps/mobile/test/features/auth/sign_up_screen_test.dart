@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_ory_auth_mobile/core/identity/customer_auth_client.dart';
 import 'package:go_ory_auth_mobile/core/identity/login_input.dart';
 import 'package:go_ory_auth_mobile/core/network/app_failure.dart';
 import 'package:go_ory_auth_mobile/features/auth/data/auth_repository.dart';
@@ -17,13 +18,11 @@ void main() {
 
   setUp(() {
     repo = MockAuthRepository();
-    when(repo.startRegistration).thenAnswer((_) async => flowWith(id: 'reg-1'));
   });
 
   void stubRegister(Future<RegistrationOutcome> Function() answer) {
     when(
       () => repo.register(
-        flowId: any(named: 'flowId'),
         login: any(named: 'login'),
         password: any(named: 'password'),
       ),
@@ -45,7 +44,6 @@ void main() {
       const SignUpScreen(),
       overrides: authOverrides(repo),
     );
-    verify(repo.startRegistration).called(1);
     for (final k in ['signUp.loginType', 'signUp.login', 'signUp.password']) {
       expect(find.byKey(Key(k)), findsOneWidget);
     }
@@ -99,7 +97,6 @@ void main() {
     await tester.pumpAndSettle();
     verify(
       () => repo.register(
-        flowId: 'reg-1',
         login: const LoginInput(type: LoginType.email, value: 'an@example.com'),
         password: 'short',
       ),
@@ -130,7 +127,6 @@ void main() {
     await tester.pumpAndSettle();
     verify(
       () => repo.register(
-        flowId: 'reg-1',
         login: const LoginInput(type: LoginType.phone, value: '0901 234 567'),
         password: 'short',
       ),
@@ -155,7 +151,6 @@ void main() {
     );
     verifyNever(
       () => repo.register(
-        flowId: any(named: 'flowId'),
         login: any(named: 'login'),
         password: any(named: 'password'),
       ),
@@ -170,16 +165,14 @@ void main() {
     );
   });
 
-  testWidgets('resolver 422 field error shown on the login field', (
-    tester,
-  ) async {
+  testWidgets('422 field error shown on the login field', (tester) async {
     stubRegister(
       () => Future.error(
         const ApiFailure(
           'validation_failed',
           status: 422,
           fieldErrors: [
-            FieldError(field: 'value', code: 'unsupported_country'),
+            FieldError(field: 'login.value', code: 'unsupported_country'),
           ],
         ),
       ),
@@ -199,9 +192,7 @@ void main() {
     );
   });
 
-  testWidgets('resolver 429: rate-limit message with Retry-After', (
-    tester,
-  ) async {
+  testWidgets('429: rate-limit message with Retry-After', (tester) async {
     stubRegister(
       () => Future.error(
         const ApiFailure(
@@ -224,16 +215,15 @@ void main() {
     );
   });
 
-  testWidgets('webhook message ids on traits.login_id are localised', (
+  testWidgets('webhook message ids on the login node are localised', (
     tester,
   ) async {
     stubRegister(
       () => Future.error(
         FlowValidationFailure(
           flowWith(
-            id: 'reg-1',
             nodeMessages: {
-              'traits.login_id': [err(4049001, 'legacy traits')],
+              AuthFlowFields.login: [err(4049001, '')],
             },
           ),
         ),
@@ -260,20 +250,12 @@ void main() {
     stubRegister(
       () => Future.error(
         FlowValidationFailure(
+          // identity-service forwards message ids only (no text, no
+          // context): the default minimum length is shown.
           flowWith(
-            id: 'reg-1',
             nodeMessages: {
-              'password': [
-                err(4000032, 'must be at least 12 characters', {
-                  'min_length': 12,
-                }),
-              ],
-              'traits.login_id': [
-                err(
-                  4000007,
-                  'An account with the same identifier exists already.',
-                ),
-              ],
+              AuthFlowFields.password: [err(4000032, '')],
+              AuthFlowFields.login: [err(4000007, '')],
             },
           ),
         ),
@@ -296,17 +278,11 @@ void main() {
     );
   });
 
-  testWidgets('global error: unknown message id falls back to Kratos text', (
-    tester,
-  ) async {
+  testWidgets('global error: unknown message id falls back to the generic '
+      'text', (tester) async {
     stubRegister(
       () => Future.error(
-        FlowValidationFailure(
-          flowWith(
-            id: 'reg-1',
-            messages: [err(4999999, 'Brand new Kratos error')],
-          ),
-        ),
+        FlowValidationFailure(flowWith(messages: [err(4999999, '')])),
       ),
     );
     await pumpScreen(
@@ -316,7 +292,10 @@ void main() {
     );
     await fillAndSubmit(tester);
     await tester.pumpAndSettle();
-    expect(find.text('Brand new Kratos error'), findsOneWidget);
+    expect(
+      find.text('Something went wrong. Please try again.'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('network error banner', (tester) async {
