@@ -1,5 +1,6 @@
-// Pre-persist registration check (ADR-0013, response.parse: true): the
-// login_id must be a pseudonym from POST /v1/auth/identifiers; a legacy
+// Pre-persist registration check (ADR-0013/0014, response.parse: true): the
+// login_id must be a handle identity-service stored (POST
+// /v1/auth/registration); a legacy
 // email trait is rejected. Only these fields leave Kratos.
 function(ctx) {
   schema_id: ctx.identity.schema_id,

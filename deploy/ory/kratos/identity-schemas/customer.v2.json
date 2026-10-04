@@ -2,7 +2,7 @@
   "$id": "https://schemas.go-ory-auth-example.local/customer.v2.json",
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Customer (v2)",
-  "description": "ADR-0013: traits hold only the pseudonymous login identifier '<base32 HMAC>@login.invalid'. The email or phone number is encrypted in identity-service (POST /v1/auth/identifiers resolves it); the real name is encrypted personal info.",
+  "description": "ADR-0013/0014: traits hold only an opaque login handle '<base32>@login.invalid' (random since ADR-0014). The email or phone number is encrypted in identity-service, which signs customers in through POST /v1/auth/login; the real name is encrypted personal info.",
   "type": "object",
   "properties": {
     "traits": {
