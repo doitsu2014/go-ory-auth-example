@@ -419,9 +419,9 @@ func (c *Client) RenewLoop(ctx context.Context) {
 	}
 }
 
-// Pseudonym implements app.LoginKeys (transit/hmac sha2-256 on the login
+// LookupKey implements app.LoginKeys (transit/hmac sha2-256 on the login
 // HMAC key, key_version pinned to 1).
-func (c *Client) Pseudonym(ctx context.Context, input []byte) (login.Pseudonym, error) {
+func (c *Client) LookupKey(ctx context.Context, input []byte) (login.LookupKey, error) {
 	var out struct {
 		Data struct {
 			HMAC string `json:"hmac"`
@@ -431,16 +431,16 @@ func (c *Client) Pseudonym(ctx context.Context, input []byte) (login.Pseudonym, 
 		"input": base64.StdEncoding.EncodeToString(input), "key_version": LoginHMACKeyVersion,
 	}, &out)
 	if err != nil {
-		return login.Pseudonym{}, err
+		return login.LookupKey{}, err
 	}
 	v, b64, ok := parseVersioned(out.Data.HMAC)
 	sum, derr := base64.StdEncoding.DecodeString(b64)
 	if !ok || v != LoginHMACKeyVersion || derr != nil || len(sum) != login.PseudonymLen {
-		return login.Pseudonym{}, errors.New("openbao login hmac: malformed response")
+		return login.LookupKey{}, errors.New("openbao login hmac: malformed response")
 	}
-	var p login.Pseudonym
-	copy(p[:], sum)
-	return p, nil
+	var k login.LookupKey
+	copy(k[:], sum)
+	return k, nil
 }
 
 // SealLogin implements app.LoginKeys (transit/encrypt with associated_data).

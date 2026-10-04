@@ -41,10 +41,10 @@ func TestPLIFR13_MigrateLegacyCustomers(t *testing.T) {
 		if !login.IsPseudonym(got.LoginID) || got.Email != "" || got.EmailVerified != c.verified {
 			t.Fatalf("identity %+v", got)
 		}
-		// The customer still resolves to the same account with their email.
-		p := l.resolve(t, "email", c.email, "sign_in")
-		if p != got.LoginID {
-			t.Fatal("pseudonym mismatch")
+		// The customer still signs in to the same account with their email.
+		l.flows.Passwords[got.LoginID] = tPassword
+		if _, err := l.auth.Login(ctx, creds("email", c.email, tPassword)); err != nil {
+			t.Fatalf("sign-in after migration: %v", err)
 		}
 		own, err := l.svc.Own(ctx, identity.Principal{IdentityID: c.id.ID, Kind: identity.KindCustomer, LoginID: got.LoginID})
 		if err != nil || own.Value() != c.email {
@@ -85,7 +85,7 @@ func TestPLIA2_MigrationCollision(t *testing.T) {
 	ctx := context.Background()
 	legacy := l.ids.AddCustomer("victim@example.com", true)
 	// Before the A2 guard existed, someone registered the pseudonym.
-	p := l.resolve(t, "email", "victim@example.com", "registration")
+	p := l.register(t, "email", "victim@example.com")
 	squatter := l.ids.AddCustomer(p, false)
 	if err := l.svc.Bind(ctx, squatter.ID, p); err != nil {
 		t.Fatal(err)

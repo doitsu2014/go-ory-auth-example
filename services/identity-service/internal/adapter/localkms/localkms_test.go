@@ -95,11 +95,11 @@ func TestLocalKMS_KeysAndFailure(t *testing.T) {
 func TestLocalKMS_LoginKeys(t *testing.T) {
 	m := NewRandom()
 	ctx := context.Background()
-	p1, _ := m.Pseudonym(ctx, []byte("in"))
-	p2, _ := m.Pseudonym(ctx, []byte("in"))
+	p1, _ := m.LookupKey(ctx, []byte("in"))
+	p2, _ := m.LookupKey(ctx, []byte("in"))
 	b, _ := m.BlindIndex(ctx, []byte("in"))
 	if p1 != p2 || bytes.Equal(p1[:], b.Sum) {
-		t.Fatal("pseudonym must be deterministic and keyed separately from the blind index")
+		t.Fatal("lookup key must be deterministic and keyed separately from the blind index")
 	}
 	ct, v, err := m.SealLogin(ctx, []byte("ad"), []byte("alice@example.com"))
 	if err != nil || v != 1 {

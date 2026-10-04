@@ -150,7 +150,6 @@ func newStackWith(t *testing.T, o stackOpts) *stack {
 			Idempotency: repos.Idempotency, Clock: app.SystemClock{}, Log: log},
 		Me:           &app.MeService{Profiles: repos.Profiles, Logins: logins},
 		Customers:    &app.CustomerService{Authz: authz, Identities: kadmin, Profiles: repos.Profiles, Tx: store, Sessions: verifier, Log: log, Logins: logins},
-		Logins:       logins,
 		Admins:       admins,
 		Audit:        &app.AuditService{Authz: authz, Audit: repos.Audit},
 		PersonalInfo: pi,
@@ -240,7 +239,7 @@ func TestFR08_E2E_CustomerPlane(t *testing.T) {
 	}
 
 	// Verify the email with the emailed code, then PATCH succeeds.
-	s.env.VerifyEmail(t, email)
+	s.env.VerifyEmail(t, email, tok)
 	s.verifier.Invalidate(custID)
 	if st := s.api(t, "PATCH", "/v1/me", call{bearer: tok}, map[string]any{"display_name": "E2E", "locale": "en-US"}, &me); st != 200 ||
 		me.DisplayName == nil || *me.DisplayName != "E2E" || me.Locale != "en-US" || !me.EmailVerified {
@@ -249,7 +248,7 @@ func TestFR08_E2E_CustomerPlane(t *testing.T) {
 
 	// Spike S3: customer on a browser login flow is interrupted by the webhook.
 	b := s.env.NewBrowser()
-	st, f := b.Login(t, s.env.Resolve(t, "email", email, "sign_in"), "")
+	st, f := b.Login(t, s.env.Handle(t, tok), "")
 	if st != 400 || !hasMessage(f, httpapi.LoginInterruptMessageID) || b.SessionCookie() != "" {
 		t.Fatalf("customer browser login must be interrupted: %d %+v cookie=%v", st, f.UI.Messages, b.SessionCookie() != "")
 	}

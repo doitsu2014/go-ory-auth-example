@@ -310,7 +310,11 @@ func (g *Guard) servePublic(w http.ResponseWriter, r *http.Request, next http.Ha
 		writeProblem(w, r, CodeInvalidRequest, "", nil)
 		return
 	}
-	next.ServeHTTP(w, r.WithContext(withPublicClientIP(r.Context(), *ip)))
+	ua := r.Header.Get("User-Agent")
+	if len(ua) > 512 {
+		ua = ua[:512]
+	}
+	next.ServeHTTP(w, r.WithContext(withPublicClient(r.Context(), *ip, ua)))
 }
 
 func isMutation(m string) bool {

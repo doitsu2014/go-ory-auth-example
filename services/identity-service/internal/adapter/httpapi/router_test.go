@@ -45,6 +45,8 @@ type fixture struct {
 	mv       *testutil.MachineVerifier
 	clients  *testutil.ServiceClients
 	clientID string
+	// Customer auth (ADR-0014).
+	flows *testutil.AuthFlows
 }
 
 // syncBuffer is a goroutine-safe log sink.
@@ -122,6 +124,7 @@ func newFixture(t *testing.T) *fixture {
 
 	repos := store.Repos()
 	kms := localkms.NewRandom()
+	flows := testutil.NewAuthFlows()
 	cache := app.NewDEKCache(100, time.Minute, clock.Now)
 	logs := &syncBuffer{}
 	log := platform.NewLogger(logs, "debug")
@@ -138,10 +141,13 @@ func newFixture(t *testing.T) *fixture {
 			RevealLimiter: app.NewRateLimiter(app.RevealRateRules, clock.Now),
 		},
 		Machine: &app.MachineService{Identities: ids, Audit: repos.Audit},
-		Logins: &app.LoginIdentifierService{Keys: kms, Logins: repos.Logins, Tx: store, Identities: ids,
-			Phone: login.PhonePolicy{DefaultCountry: "84", AllowedCountries: []string{"84"}}, PhoneEnabled: true,
-			Phase: app.PhaseComplete, Clock: clock, Log: log,
-			ResolveLimiter: app.NewKeyedLimiter[string]([]app.RateRule{{Limit: 3, Window: time.Minute}}, clock.Now)},
+		Auth: &app.CustomerAuthService{
+			Logins: &app.LoginIdentifierService{Keys: kms, Logins: repos.Logins, Tx: store, Identities: ids,
+				Phone: login.PhonePolicy{DefaultCountry: "84", AllowedCountries: []string{"84"}}, PhoneEnabled: true,
+				Phase: app.PhaseComplete, Clock: clock, Log: log},
+			Flows:         flows,
+			SignInLimiter: app.NewKeyedLimiter[string]([]app.RateRule{{Limit: 3, Window: time.Minute}}, clock.Now),
+		},
 		ServiceClients: &app.ServiceClientService{Authz: authz, Clients: clients, Verifier: mv, Tx: store,
 			Idempotency: repos.Idempotency, Clock: clock, Log: log},
 	}
@@ -156,7 +162,7 @@ func newFixture(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	return &fixture{h: h, ids: ids, store: store, kms: kms, cache: cache, logs: logs, customer: cust.ID, target: target.ID,
-		kratos: v, mv: mv, clients: clients, clientID: sc.ClientID}
+		kratos: v, mv: mv, clients: clients, clientID: sc.ClientID, flows: flows}
 }
 
 type route struct {

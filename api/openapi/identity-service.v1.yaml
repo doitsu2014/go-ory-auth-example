@@ -7,7 +7,7 @@ info:
     Human-readable guide: docs/api/identity-service-api.md.
 
     Credential is bound to plane:
-    - `POST /v1/auth/identifiers` takes no credential (public, rate limited per client IP).
+    - `POST /v1/auth/{login,registration,recovery}` take no credential (public, rate limited per client IP).
     - `/v1/*` accepts only `Authorization: Bearer <kratos session token>` (mobile).
     - `/admin/v1/*` accepts only the Kratos session cookie (admin web).
     - `/m2m/v1/*` accepts only an Ory Hydra client_credentials JWT (service clients).
@@ -28,37 +28,132 @@ tags:
   - name: service-clients
 
 paths:
-  /v1/auth/identifiers:
+  /v1/auth/login:
     post:
       tags: [auth]
-      operationId: resolveLoginIdentifier
-      summary: Resolve an email or phone number to the pseudonymous login identifier
+      operationId: customerLogin
+      summary: Sign a customer in with email or phone number and password
       description: |
-        ADR-0013. The app calls this before every Kratos flow that takes an
-        identifier and sends the returned `identifier` (never the email or
-        phone number) to Kratos together with the password or code. Passwords
-        and codes never come here.
+        ADR-0014. identity-service normalises the address, finds its opaque
+        Kratos handle through the keyed lookup hash and runs a Kratos native
+        (API) login flow on the customer's behalf. The handle never leaves the
+        server. Unknown addresses run the same flow with a random decoy
+        handle, so the answer is identical: 400 `auth_flow_rejected` with
+        `errors[{field: "form", code: "4000006"}]`.
 
-        Only `purpose: registration` stores the address (encrypted). The
-        response is the same whether or not an account exists. Rate limited per
-        client IP (IPv6 per /64): sign_in/recovery/verification 20/min and
-        200/day, registration 5/min and 30/day → 429 `rate_limited`.
-        The value is never echoed in errors.
+        Rejections carry Kratos message ids only (`field` is `login`,
+        `password` or `form`); never the flow. The password is never logged
+        or stored. Rate limited per client IP (IPv6 per /64) 20/min and
+        200/day, per /24 (/48) network, and per account for failed attempts
+        (10/15 min, 50/day) → 429 `rate_limited`.
       security: []
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/ResolveLoginIdentifierRequest" }
+            schema: { $ref: "#/components/schemas/CustomerCredentials" }
       responses:
         "200":
-          description: Pseudonymous login identifier
-          headers:
-            Cache-Control: { schema: { type: string, example: no-store } }
+          description: Signed in
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ResolvedLoginIdentifier" }
+              schema: { $ref: "#/components/schemas/CustomerAuthSession" }
         "400": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+
+  /v1/auth/registration:
+    post:
+      tags: [auth]
+      operationId: customerRegistration
+      summary: Register a customer with email or phone number and password
+      description: |
+        ADR-0014. Stores the address encrypted under a new random handle (or
+        re-uses the handle of an earlier, unfinished registration of the same
+        address) and runs a Kratos native registration flow with
+        `traits.login_id = <handle>`. Kratos sends the verification code; the
+        app submits it to Kratos directly with `verification_flow_id`.
+        Password policy and duplicate errors come back as 400
+        `auth_flow_rejected` (e.g. `password`/`4000032`, `login`/`4000007`).
+        Rate limited per client IP 5/min and 30/day, and per network.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CustomerCredentials" }
+      responses:
+        "200":
+          description: Registered and signed in
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomerAuthSession" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+
+  /v1/auth/recovery:
+    post:
+      tags: [auth]
+      operationId: customerRecovery
+      summary: Start password recovery by code for an email or phone number
+      description: |
+        ADR-0014. Starts a Kratos native recovery flow (method `code`) for the
+        address's handle — or a random decoy handle when there is no account,
+        so the response has the same shape every time. A code is delivered
+        (email or SMS) only when the account exists.
+
+        The response carries `recovery_id`, the flow id sealed by
+        identity-service: never the Kratos flow id, because anyone can read a
+        Kratos recovery flow by id and it shows the handle. The app submits
+        the code with `POST /v1/auth/recovery/code`, then sets the new
+        password in the returned settings flow at Kratos directly. Same rate
+        limits as login (per IP and network).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CustomerRecoveryRequest" }
+      responses:
+        "200":
+          description: Recovery flow started
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomerRecoveryStarted" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+
+  /v1/auth/recovery/code:
+    post:
+      tags: [auth]
+      operationId: customerRecoveryCode
+      summary: Submit a recovery code
+      description: |
+        ADR-0014. Submits the 6-digit code on the recovery flow behind
+        `recovery_id`. A valid code returns Kratos's privileged session token
+        and the settings flow to set the new password in (directly at
+        Kratos, `X-Session-Token`). A wrong code is 400 `auth_flow_rejected`
+        (`form`/`4060006`); an expired flow 410 `auth_flow_expired` (start
+        again with `POST /v1/auth/recovery`). Same rate limits as login.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CustomerRecoveryCodeRequest" }
+      responses:
+        "200":
+          description: Code accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomerRecoveryGrant" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "410": { $ref: "#/components/responses/Problem" }
         "422": { $ref: "#/components/responses/Problem" }
         "429": { $ref: "#/components/responses/Problem" }
         "503": { $ref: "#/components/responses/Problem" }
@@ -596,7 +691,7 @@ paths:
       summary: Kratos pre-persist registration check (response.parse true)
       description: |
         ADR-0013 / PLI-FR-04. Rejects a registration whose `login_id` is not a
-        pseudonym from `POST /v1/auth/identifiers`, a legacy `email` trait, or
+        handle stored by identity-service (ADR-0014), a legacy `email` trait, or
         (during the migration) an address a legacy customer already uses. 200
         allows; 400 carries Kratos-formatted messages on `#/traits/login_id`
         (ids 4049001 legacy traits, 4049002 unresolved, 4000007 duplicate).
@@ -726,7 +821,9 @@ components:
             Stable machine code. Known values: unauthenticated, forbidden, not_admin,
             aal2_required, mfa_enrollment_required, email_not_verified, not_found,
             conflict, validation_failed, rate_limited, dependency_unavailable, internal,
-            invalid_request, invalid_token, insufficient_scope (machine plane; also sent in `WWW-Authenticate`).
+            invalid_request, invalid_token, insufficient_scope (machine plane; also sent in `WWW-Authenticate`),
+            auth_flow_rejected (400, /v1/auth/*: Kratos rejected the flow; `errors[].code` is the Kratos message id,
+            `errors[].field` is login, password or form), auth_flow_expired (410, /v1/auth/recovery/code: start again).
             Clients must tolerate unknown values.
         detail: { type: string }
         request_id: { type: string }
@@ -874,23 +971,56 @@ components:
         type: { $ref: "#/components/schemas/LoginType" }
         masked: { type: string, example: "a***@e***.com", description: "Email: first character of local part and domain label + TLD; phone: calling code + 7 stars + last 3" }
 
-    ResolveLoginIdentifierRequest:
+    CustomerCredentials:
       type: object
       additionalProperties: false
-      required: [type, value, purpose]
+      required: [login, password]
       properties:
-        type: { $ref: "#/components/schemas/LoginType" }
-        value: { type: string, maxLength: 320, example: "alice@example.com" }
-        purpose: { type: string, enum: [registration, sign_in, recovery, verification] }
+        login: { $ref: "#/components/schemas/LoginIdentifier" }
+        password: { type: string, minLength: 1, maxLength: 1024, format: password }
 
-    ResolvedLoginIdentifier:
+    CustomerRecoveryRequest:
       type: object
-      required: [identifier]
+      additionalProperties: false
+      required: [login]
       properties:
-        identifier:
+        login: { $ref: "#/components/schemas/LoginIdentifier" }
+
+    CustomerAuthSession:
+      type: object
+      required: [session_token, session]
+      properties:
+        session_token: { type: string, description: "Kratos session token (store in secure storage; send as Bearer to /v1 and X-Session-Token to Kratos)" }
+        session:
+          type: object
+          additionalProperties: true
+          description: The Kratos session object, as returned by Kratos to its owner
+          x-go-type: json.RawMessage
+        verification_flow_id:
           type: string
-          pattern: "^[a-z2-7]{52}@login\\.invalid$"
-          example: l4cwc5fmnvxqxufy7wuuh2mfathke4fvwo3curj5ydaoo3iijsgq@login.invalid
+          format: uuid
+          description: Registration only, when Kratos started a verification flow (code already sent)
+
+    CustomerRecoveryStarted:
+      type: object
+      required: [recovery_id]
+      properties:
+        recovery_id: { type: string, maxLength: 1024, description: "Opaque reference to the recovery flow (sealed by identity-service); send it back with the code" }
+
+    CustomerRecoveryCodeRequest:
+      type: object
+      additionalProperties: false
+      required: [recovery_id, code]
+      properties:
+        recovery_id: { type: string, minLength: 1, maxLength: 1024 }
+        code: { type: string, pattern: "^[0-9]{6}$" }
+
+    CustomerRecoveryGrant:
+      type: object
+      required: [session_token, settings_flow_id]
+      properties:
+        session_token: { type: string, description: "Privileged Kratos session token (store it only after the new password is set)" }
+        settings_flow_id: { type: string, description: Kratos native settings flow for the new password }
 
     MaskedPersonalInfo:
       type: object

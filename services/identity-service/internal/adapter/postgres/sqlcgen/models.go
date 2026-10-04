@@ -65,6 +65,7 @@ type LoginIdentifier struct {
 	LegacyVerified  bool
 	CreatedAt       time.Time
 	LastValidatedAt time.Time
+	LookupKey       []byte
 }
 
 type Profile struct {

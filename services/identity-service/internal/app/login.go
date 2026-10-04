@@ -41,18 +41,22 @@ var (
 	// ErrLoginLegacyTraits: a registration with the legacy email trait (old
 	// app build or direct API call).
 	ErrLoginLegacyTraits = errors.New("login: legacy traits")
-	// ErrLoginUnresolved: the login_id is not a pseudonym from the resolve
-	// endpoint (no vault entry).
+	// ErrLoginUnresolved: the login_id is not a handle identity-service
+	// stored (no vault entry), e.g. a registration sent to Kratos directly.
 	ErrLoginUnresolved = errors.New("login: unresolved identifier")
 	// ErrLoginDuplicate: a legacy customer already signs in with the same
 	// address (migration window).
 	ErrLoginDuplicate = errors.New("login: duplicate identifier")
 )
 
-// Rate limits for the public resolve endpoint (A5, api-contract §3).
+// Rate limits of the public customer auth routes (ADR-0014): per client IP
+// for sign-in/recovery and for registration, per network, failed sign-ins
+// per account, and the courier per recipient.
 var (
-	ResolveRateRules     = []RateRule{{Limit: 20, Window: time.Minute}, {Limit: 200, Window: 24 * time.Hour}}
+	SignInRateRules      = []RateRule{{Limit: 20, Window: time.Minute}, {Limit: 200, Window: 24 * time.Hour}}
 	RegisterRateRules    = []RateRule{{Limit: 5, Window: time.Minute}, {Limit: 30, Window: 24 * time.Hour}}
+	NetRateRules         = []RateRule{{Limit: 300, Window: time.Minute}, {Limit: 5000, Window: 24 * time.Hour}}
+	AccountRateRules     = []RateRule{{Limit: 10, Window: 15 * time.Minute}, {Limit: 50, Window: 24 * time.Hour}}
 	InsertGlobalRules    = []RateRule{{Limit: 120, Window: time.Minute}}
 	CourierRecipientRule = []RateRule{{Limit: 5, Window: time.Hour}, {Limit: 20, Window: 24 * time.Hour}}
 )
@@ -88,9 +92,10 @@ type MaskedLogin struct {
 }
 
 // LoginIdentifierService implements the pseudonymous login identifier use
-// cases (ADR-0013): resolve, pre-registration check, binding, owner and
-// admin views, lookup, purge and re-wrap. Plaintext addresses exist only in
-// memory for one request; no method logs them.
+// cases (ADR-0013, ADR-0014): finding and claiming the vault entry of an
+// address, pre-registration check, binding, owner and admin views, lookup,
+// purge and re-wrap. Plaintext addresses exist only in memory for one
+// request; no method logs them.
 type LoginIdentifierService struct {
 	Keys       LoginKeys
 	Logins     LoginIdentifierRepo
@@ -103,94 +108,96 @@ type LoginIdentifierService struct {
 	Phase        MigrationPhase
 	Clock        Clock
 	Log          *slog.Logger
-	// Limiters (nil = unlimited). Resolve/Register are per IPBucket,
-	// NetLimiter per NetBucket (all purposes). InsertLimiter (global, key "")
-	// counts new vault rows and only alerts: refusing every registration
-	// when it trips would let a few networks block all sign-ups (SEC-C03).
-	ResolveLimiter  *KeyedLimiter[string]
-	RegisterLimiter *KeyedLimiter[string]
-	NetLimiter      *KeyedLimiter[string]
-	InsertLimiter   *KeyedLimiter[string]
+	// InsertLimiter (global, key "", nil = unlimited) counts new vault rows
+	// and only alerts: refusing every registration when it trips would let a
+	// few networks block all sign-ups (SEC-C03).
+	InsertLimiter *KeyedLimiter[string]
 }
 
-// ResolveRequest is the input of Resolve.
-type ResolveRequest struct {
-	ClientIP netip.Addr
-	Type     string
-	Value    string
-	Purpose  string
-}
-
-// Resolve returns the pseudonym of a typed identifier (PLI-FR-01). Only the
-// registration purpose stores the encrypted address (PLI-FR-02); it always
-// seals and inserts-if-absent, so the response and timing do not depend on
-// whether the address is known (PLI-NFR-08).
-func (s *LoginIdentifierService) Resolve(ctx context.Context, in ResolveRequest) (string, error) {
-	kind, okKind := login.ParseKind(in.Type)
-	purpose, okPurpose := login.ParsePurpose(in.Purpose)
-	var fields []FieldError
+// parse validates the type and normalises what the customer typed. Field
+// errors are reported under prefix ("login.type", "login.value").
+func (s *LoginIdentifierService) parse(typ, value, prefix string) (login.Identifier, error) {
+	kind, ok := login.ParseKind(typ)
 	switch {
-	case !okKind:
-		fields = append(fields, FieldError{Field: "type", Code: "invalid"})
+	case !ok:
+		return login.Identifier{}, NewValidationError(prefix+"type", "invalid")
 	case kind == login.KindPhone && !s.PhoneEnabled:
-		fields = append(fields, FieldError{Field: "type", Code: "unsupported"})
+		return login.Identifier{}, NewValidationError(prefix+"type", "unsupported")
 	}
-	if !okPurpose {
-		fields = append(fields, FieldError{Field: "purpose", Code: "invalid"})
-	}
-	if len(fields) > 0 {
-		return "", &ValidationError{Fields: fields}
-	}
-	bucket := IPBucket(in.ClientIP)
-	limiter := s.ResolveLimiter
-	if purpose.Persists() {
-		limiter = s.RegisterLimiter
-	}
-	if !limiter.Peek(bucket, 1) || !s.NetLimiter.Peek(NetBucket(in.ClientIP), 1) {
-		return "", ErrRateLimited
-	}
-	limiter.Allow(bucket)
-	s.NetLimiter.Allow(NetBucket(in.ClientIP))
-	id, err := login.Parse(kind, in.Value, s.Phone)
+	id, err := login.Parse(kind, value, s.Phone)
 	if err != nil {
 		code, _ := login.IsInvalid(err)
-		return "", NewValidationError("value", code)
+		return login.Identifier{}, NewValidationError(prefix+"value", code)
 	}
-	p, err := s.pseudonym(ctx, id)
+	return id, nil
+}
+
+func (s *LoginIdentifierService) lookupKey(ctx context.Context, id login.Identifier) (login.LookupKey, error) {
+	input := login.LookupInput(id)
+	defer clear(input)
+	k, err := s.Keys.LookupKey(ctx, input)
 	if err != nil {
-		return "", err
+		return login.LookupKey{}, fmt.Errorf("login lookup key: %w", err)
 	}
-	if purpose.Persists() {
-		inserted, err := s.store(ctx, id, p, nil, false)
-		if err != nil {
-			return "", err
-		}
-		if inserted && !s.InsertLimiter.Allow("") {
+	return k, nil
+}
+
+// find returns the vault entry of an address (ErrNotFound when there is
+// none) and its lookup key.
+func (s *LoginIdentifierService) find(ctx context.Context, id login.Identifier) (LoginRecord, login.LookupKey, error) {
+	k, err := s.lookupKey(ctx, id)
+	if err != nil {
+		return LoginRecord{}, k, err
+	}
+	rec, err := s.Logins.GetByLookupKey(ctx, k)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return LoginRecord{}, k, fmt.Errorf("get login: %w", err)
+	}
+	return rec, k, err
+}
+
+// claim returns the handle of an address, storing the sealed address under a
+// new random handle when it has none (registration, migration). A row that
+// exists (an earlier, unfinished registration, or a concurrent one that won
+// the insert) is re-used, so one address always has one handle.
+func (s *LoginIdentifierService) claim(ctx context.Context, id login.Identifier, bindTo *uuid.UUID, verified bool) (login.Pseudonym, error) {
+	rec, k, err := s.find(ctx, id)
+	if err == nil {
+		return rec.Pseudonym, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return login.Pseudonym{}, err
+	}
+	p, err := login.NewPseudonym()
+	if err != nil {
+		return login.Pseudonym{}, err
+	}
+	inserted, err := s.store(ctx, id, k, p, bindTo, verified)
+	if err != nil {
+		return login.Pseudonym{}, err
+	}
+	if inserted {
+		if !s.InsertLimiter.Allow("") {
 			s.log().ErrorContext(ctx, "login_insert_rate_high") // alert (A8); never blocks sign-ups
 		}
+		return p, nil
 	}
-	return p.String(), nil
-}
-
-func (s *LoginIdentifierService) pseudonym(ctx context.Context, id login.Identifier) (login.Pseudonym, error) {
-	input := login.PseudonymInput(id)
-	defer clear(input)
-	p, err := s.Keys.Pseudonym(ctx, input)
+	rec, err = s.Logins.GetByLookupKey(ctx, k)
 	if err != nil {
-		return login.Pseudonym{}, fmt.Errorf("login pseudonym: %w", err)
+		return login.Pseudonym{}, fmt.Errorf("get claimed login: %w", err)
 	}
-	return p, nil
+	return rec.Pseudonym, nil
 }
 
-// store seals the identifier under its pseudonym and inserts it if absent.
-func (s *LoginIdentifierService) store(ctx context.Context, id login.Identifier, p login.Pseudonym, bindTo *uuid.UUID, verified bool) (bool, error) {
+// store seals the identifier under its handle and inserts it if absent.
+func (s *LoginIdentifierService) store(ctx context.Context, id login.Identifier, k login.LookupKey, p login.Pseudonym, bindTo *uuid.UUID, verified bool) (bool, error) {
 	pt := []byte(id.Value())
 	ct, v, err := s.Keys.SealLogin(ctx, login.AAD(id.Kind(), p), pt)
 	clear(pt)
 	if err != nil {
 		return false, fmt.Errorf("seal login: %w", err)
 	}
-	rec := LoginRecord{Pseudonym: p, Kind: id.Kind(), Ciphertext: ct, KEKVersion: v, IdentityID: bindTo, LegacyVerified: verified}
+	rec := LoginRecord{Pseudonym: p, LookupKey: k, Kind: id.Kind(), Ciphertext: ct, KEKVersion: v, IdentityID: bindTo, LegacyVerified: verified}
 	inserted, err := s.Logins.InsertIfAbsent(ctx, rec)
 	if err != nil {
 		return false, fmt.Errorf("store login: %w", err)
@@ -282,7 +289,7 @@ func (s *LoginIdentifierService) bind(ctx context.Context, id uuid.UUID, p login
 		return rec, nil
 	}
 	if rec.IdentityID == nil {
-		// Inserted unbound between Bind and Get (concurrent resolve): retry once.
+		// Inserted unbound between Bind and Get (concurrent registration): retry once.
 		if ok, err := s.Logins.Bind(ctx, p, id, nil); err != nil || !ok {
 			return LoginRecord{}, fmt.Errorf("bind login: %w", ErrDataIntegrity)
 		}
@@ -406,8 +413,9 @@ func (s *LoginIdentifierService) MaskMany(ctx context.Context, its []identity.Id
 }
 
 // FindCustomers returns the customers whose login is the typed identifier
-// (admin lookup, PLI-FR-11). During the transition, legacy customers with
-// the plaintext email are found too.
+// (admin lookup, PLI-FR-11, PLX-FR-09): the vault entry of the address gives
+// the Kratos handle. During the transition, legacy customers with the
+// plaintext email are found too.
 func (s *LoginIdentifierService) FindCustomers(ctx context.Context, kindStr, raw string) ([]identity.Identity, error) {
 	kind, ok := login.ParseKind(kindStr)
 	if !ok {
@@ -420,11 +428,14 @@ func (s *LoginIdentifierService) FindCustomers(ctx context.Context, kindStr, raw
 		code, _ := login.IsInvalid(err)
 		return nil, NewValidationError("login.value", code)
 	}
-	p, err := s.pseudonym(ctx, id)
-	if err != nil {
+	var queries []string
+	rec, _, err := s.find(ctx, id)
+	switch {
+	case err == nil:
+		queries = append(queries, rec.Pseudonym.String())
+	case !errors.Is(err, ErrNotFound):
 		return nil, err
 	}
-	queries := []string{p.String()}
 	if s.Phase != PhaseComplete && kind == login.KindEmail {
 		queries = append(queries, id.Value())
 	}
@@ -455,7 +466,7 @@ type PurgeResult struct {
 	Conflicts int
 }
 
-// MinPurgeAge is the smallest allowed purge age: a resolve for registration
+// MinPurgeAge is the smallest allowed purge age: a vault row stored for a registration
 // must survive until the registration is submitted (A10).
 const MinPurgeAge = 24 * time.Hour
 

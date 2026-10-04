@@ -64,7 +64,7 @@ func (s *stack) verifiedCustomer(t *testing.T) (string, uuid.UUID) {
 		_, _ = s.store.Repos().SubjectKeys.Delete(context.Background(), id)
 		s.env.DeleteIdentity(t, id)
 	})
-	s.env.VerifyEmail(t, email)
+	s.env.VerifyEmail(t, email, reg.SessionToken)
 	s.verifier.Invalidate(id)
 	return reg.SessionToken, id
 }

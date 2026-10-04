@@ -109,11 +109,11 @@ func TestPLIFR01_PseudonymRoundTrip(t *testing.T) {
 func TestPLIFR01_InputDomainSeparation(t *testing.T) {
 	e, _ := Parse(KindEmail, "84901234567@example.com", vn)
 	p, _ := Parse(KindPhone, "+84901234567", vn)
-	if !bytes.HasPrefix(PseudonymInput(e), []byte("login-id/v1\x00email\x00")) {
-		t.Fatalf("email input %q", PseudonymInput(e))
+	if !bytes.HasPrefix(LookupInput(e), []byte("login-id/v1\x00email\x00")) {
+		t.Fatalf("email input %q", LookupInput(e))
 	}
-	if !bytes.Equal(PseudonymInput(p), []byte("login-id/v1\x00phone\x00+84901234567")) {
-		t.Fatalf("phone input %q", PseudonymInput(p))
+	if !bytes.Equal(LookupInput(p), []byte("login-id/v1\x00phone\x00+84901234567")) {
+		t.Fatalf("phone input %q", LookupInput(p))
 	}
 }
 

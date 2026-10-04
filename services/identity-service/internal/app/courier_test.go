@@ -11,6 +11,7 @@ import (
 
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/app"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/identity"
+	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/login"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/testutil"
 )
 
@@ -23,7 +24,6 @@ type courierEnv struct {
 func newCourierEnv(t *testing.T) *courierEnv {
 	t.Helper()
 	l := newLoginEnv(t)
-	l.svc.RegisterLimiter = nil // fixtures register many customers
 	c := &courierEnv{loginEnv: l, sms: &testutil.SMS{}}
 	c.disp = &app.CourierDispatcher{
 		Logins: l.svc, Identities: l.ids, Profiles: l.store.Repos().Profiles, Mailer: l.mail, SMS: c.sms,
@@ -36,7 +36,7 @@ func newCourierEnv(t *testing.T) *courierEnv {
 
 func (c *courierEnv) customer(t *testing.T, typ, value string) identity.Identity {
 	t.Helper()
-	return c.ids.AddCustomer(c.resolve(t, typ, value, "registration"), false)
+	return c.ids.AddCustomer(c.register(t, typ, value), false)
 }
 
 func msg(to string, id uuid.UUID, code string) app.CourierMessage {
@@ -107,7 +107,8 @@ func TestPLIA4_DropDecisionTable(t *testing.T) {
 	victim := c.customer(t, "email", "victim@example.com")
 	admin := c.ids.Add(identity.Identity{SchemaID: "admin", Email: "ops@example.com", LoginID: "ops@example.com"})
 	legacy := c.ids.AddCustomer("legacy@example.com", true)
-	unknown := c.resolve(t, "email", "nobody@example.com", "sign_in")
+	decoy, _ := login.NewPseudonym() // well-shaped, no vault row
+	unknown := decoy.String()
 	ghost := c.ids.AddCustomer(unknown, false)
 	for _, tc := range []struct {
 		name string

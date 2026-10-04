@@ -153,7 +153,7 @@ func (q *Queries) DeleteStaleUnboundLoginIdentifier(ctx context.Context, arg Del
 }
 
 const getLoginIdentifier = `-- name: GetLoginIdentifier :one
-SELECT pseudonym, kind, value_ct, kek_version, identity_id, bound_at, legacy_verified, created_at, last_validated_at
+SELECT pseudonym, kind, value_ct, kek_version, identity_id, bound_at, legacy_verified, created_at, last_validated_at, lookup_key
 FROM login_identifier
 WHERE pseudonym = $1
 `
@@ -171,12 +171,13 @@ func (q *Queries) GetLoginIdentifier(ctx context.Context, pseudonym []byte) (Log
 		&i.LegacyVerified,
 		&i.CreatedAt,
 		&i.LastValidatedAt,
+		&i.LookupKey,
 	)
 	return i, err
 }
 
 const getLoginIdentifierByIdentity = `-- name: GetLoginIdentifierByIdentity :one
-SELECT pseudonym, kind, value_ct, kek_version, identity_id, bound_at, legacy_verified, created_at, last_validated_at
+SELECT pseudonym, kind, value_ct, kek_version, identity_id, bound_at, legacy_verified, created_at, last_validated_at, lookup_key
 FROM login_identifier
 WHERE identity_id = $1
 `
@@ -194,12 +195,38 @@ func (q *Queries) GetLoginIdentifierByIdentity(ctx context.Context, identityID u
 		&i.LegacyVerified,
 		&i.CreatedAt,
 		&i.LastValidatedAt,
+		&i.LookupKey,
+	)
+	return i, err
+}
+
+const getLoginIdentifierByLookupKey = `-- name: GetLoginIdentifierByLookupKey :one
+SELECT pseudonym, kind, value_ct, kek_version, identity_id, bound_at, legacy_verified, created_at, last_validated_at, lookup_key
+FROM login_identifier
+WHERE lookup_key = $1
+`
+
+// Sign-in, registration, recovery and admin lookup (ADR-0014).
+func (q *Queries) GetLoginIdentifierByLookupKey(ctx context.Context, lookupKey []byte) (LoginIdentifier, error) {
+	row := q.db.QueryRow(ctx, getLoginIdentifierByLookupKey, lookupKey)
+	var i LoginIdentifier
+	err := row.Scan(
+		&i.Pseudonym,
+		&i.Kind,
+		&i.ValueCt,
+		&i.KekVersion,
+		&i.IdentityID,
+		&i.BoundAt,
+		&i.LegacyVerified,
+		&i.CreatedAt,
+		&i.LastValidatedAt,
+		&i.LookupKey,
 	)
 	return i, err
 }
 
 const getLoginIdentifiers = `-- name: GetLoginIdentifiers :many
-SELECT pseudonym, kind, value_ct, kek_version, identity_id, bound_at, legacy_verified, created_at, last_validated_at
+SELECT pseudonym, kind, value_ct, kek_version, identity_id, bound_at, legacy_verified, created_at, last_validated_at, lookup_key
 FROM login_identifier
 WHERE pseudonym = ANY($1::bytea[])
 `
@@ -223,6 +250,7 @@ func (q *Queries) GetLoginIdentifiers(ctx context.Context, pseudonyms [][]byte) 
 			&i.LegacyVerified,
 			&i.CreatedAt,
 			&i.LastValidatedAt,
+			&i.LookupKey,
 		); err != nil {
 			return nil, err
 		}
@@ -235,14 +263,15 @@ func (q *Queries) GetLoginIdentifiers(ctx context.Context, pseudonyms [][]byte) 
 }
 
 const insertLoginIdentifier = `-- name: InsertLoginIdentifier :execrows
-INSERT INTO login_identifier (pseudonym, kind, value_ct, kek_version, identity_id, bound_at, legacy_verified)
-VALUES ($1, $2, $3, $4, $5,
-        CASE WHEN $5::uuid IS NULL THEN NULL ELSE now() END, $6)
-ON CONFLICT (pseudonym) DO NOTHING
+INSERT INTO login_identifier (pseudonym, lookup_key, kind, value_ct, kek_version, identity_id, bound_at, legacy_verified)
+VALUES ($1, $2, $3, $4, $5, $6,
+        CASE WHEN $6::uuid IS NULL THEN NULL ELSE now() END, $7)
+ON CONFLICT DO NOTHING
 `
 
 type InsertLoginIdentifierParams struct {
 	Pseudonym      []byte
+	LookupKey      []byte
 	Kind           string
 	ValueCt        string
 	KekVersion     int32
@@ -250,10 +279,12 @@ type InsertLoginIdentifierParams struct {
 	LegacyVerified bool
 }
 
-// Registration resolve (PLI-FR-02): idempotent insert.
+// Registration (PLX-FR-02): idempotent insert. A row for the same address
+// (lookup_key) or handle (pseudonym) wins; the caller re-reads it.
 func (q *Queries) InsertLoginIdentifier(ctx context.Context, arg InsertLoginIdentifierParams) (int64, error) {
 	result, err := q.db.Exec(ctx, insertLoginIdentifier,
 		arg.Pseudonym,
+		arg.LookupKey,
 		arg.Kind,
 		arg.ValueCt,
 		arg.KekVersion,
@@ -267,7 +298,7 @@ func (q *Queries) InsertLoginIdentifier(ctx context.Context, arg InsertLoginIden
 }
 
 const listAllLoginIdentifiers = `-- name: ListAllLoginIdentifiers :many
-SELECT pseudonym, kind, value_ct, kek_version, identity_id, bound_at, legacy_verified, created_at, last_validated_at
+SELECT pseudonym, kind, value_ct, kek_version, identity_id, bound_at, legacy_verified, created_at, last_validated_at, lookup_key
 FROM login_identifier
 WHERE pseudonym > $1
 ORDER BY pseudonym
@@ -298,6 +329,7 @@ func (q *Queries) ListAllLoginIdentifiers(ctx context.Context, arg ListAllLoginI
 			&i.LegacyVerified,
 			&i.CreatedAt,
 			&i.LastValidatedAt,
+			&i.LookupKey,
 		); err != nil {
 			return nil, err
 		}
@@ -310,7 +342,7 @@ func (q *Queries) ListAllLoginIdentifiers(ctx context.Context, arg ListAllLoginI
 }
 
 const listBoundLoginIdentifiers = `-- name: ListBoundLoginIdentifiers :many
-SELECT pseudonym, kind, value_ct, kek_version, identity_id, bound_at, legacy_verified, created_at, last_validated_at
+SELECT pseudonym, kind, value_ct, kek_version, identity_id, bound_at, legacy_verified, created_at, last_validated_at, lookup_key
 FROM login_identifier
 WHERE identity_id IS NOT NULL AND pseudonym > $1
 ORDER BY pseudonym
@@ -341,6 +373,7 @@ func (q *Queries) ListBoundLoginIdentifiers(ctx context.Context, arg ListBoundLo
 			&i.LegacyVerified,
 			&i.CreatedAt,
 			&i.LastValidatedAt,
+			&i.LookupKey,
 		); err != nil {
 			return nil, err
 		}
@@ -353,7 +386,7 @@ func (q *Queries) ListBoundLoginIdentifiers(ctx context.Context, arg ListBoundLo
 }
 
 const listStaleUnboundLoginIdentifiers = `-- name: ListStaleUnboundLoginIdentifiers :many
-SELECT pseudonym, kind, value_ct, kek_version, identity_id, bound_at, legacy_verified, created_at, last_validated_at
+SELECT pseudonym, kind, value_ct, kek_version, identity_id, bound_at, legacy_verified, created_at, last_validated_at, lookup_key
 FROM login_identifier
 WHERE identity_id IS NULL AND last_validated_at < $1
 ORDER BY last_validated_at
@@ -385,6 +418,7 @@ func (q *Queries) ListStaleUnboundLoginIdentifiers(ctx context.Context, arg List
 			&i.LegacyVerified,
 			&i.CreatedAt,
 			&i.LastValidatedAt,
+			&i.LookupKey,
 		); err != nil {
 			return nil, err
 		}

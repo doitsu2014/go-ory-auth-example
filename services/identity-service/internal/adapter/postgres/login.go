@@ -18,7 +18,7 @@ import (
 type LoginIdentifierRepo struct{ q *sqlcgen.Queries }
 
 func toLoginRecord(r sqlcgen.LoginIdentifier) (app.LoginRecord, error) {
-	if len(r.Pseudonym) != login.PseudonymLen {
+	if len(r.Pseudonym) != login.PseudonymLen || len(r.LookupKey) != login.PseudonymLen {
 		return app.LoginRecord{}, app.ErrDataIntegrity
 	}
 	out := app.LoginRecord{
@@ -27,6 +27,7 @@ func toLoginRecord(r sqlcgen.LoginIdentifier) (app.LoginRecord, error) {
 		CreatedAt: r.CreatedAt, LastValidatedAt: r.LastValidatedAt,
 	}
 	copy(out.Pseudonym[:], r.Pseudonym)
+	copy(out.LookupKey[:], r.LookupKey)
 	if r.IdentityID.Valid {
 		id := r.IdentityID.UUID
 		out.IdentityID = &id
@@ -56,7 +57,7 @@ func nullUUID(id *uuid.UUID) uuid.NullUUID {
 // InsertIfAbsent implements app.LoginIdentifierRepo.
 func (r LoginIdentifierRepo) InsertIfAbsent(ctx context.Context, rec app.LoginRecord) (bool, error) {
 	n, err := r.q.InsertLoginIdentifier(ctx, sqlcgen.InsertLoginIdentifierParams{
-		Pseudonym: rec.Pseudonym[:], Kind: string(rec.Kind), ValueCt: rec.Ciphertext,
+		Pseudonym: rec.Pseudonym[:], LookupKey: rec.LookupKey[:], Kind: string(rec.Kind), ValueCt: rec.Ciphertext,
 		KekVersion: int32(rec.KEKVersion), IdentityID: nullUUID(rec.IdentityID), LegacyVerified: rec.LegacyVerified,
 	})
 	if err != nil {
@@ -73,6 +74,18 @@ func (r LoginIdentifierRepo) Get(ctx context.Context, p login.Pseudonym) (app.Lo
 	}
 	if err != nil {
 		return app.LoginRecord{}, piiErr("get login identifier", err)
+	}
+	return toLoginRecord(row)
+}
+
+// GetByLookupKey implements app.LoginIdentifierRepo.
+func (r LoginIdentifierRepo) GetByLookupKey(ctx context.Context, k login.LookupKey) (app.LoginRecord, error) {
+	row, err := r.q.GetLoginIdentifierByLookupKey(ctx, k[:])
+	if errors.Is(err, pgx.ErrNoRows) {
+		return app.LoginRecord{}, app.ErrNotFound
+	}
+	if err != nil {
+		return app.LoginRecord{}, piiErr("get login identifier by lookup key", err)
 	}
 	return toLoginRecord(row)
 }

@@ -100,11 +100,15 @@ type Config struct {
 	LoginMigrationPhase        string   `env:"LOGIN_MIGRATION_PHASE" envDefault:"transition"`
 	LoginPhoneDefaultCountry   string   `env:"LOGIN_PHONE_DEFAULT_COUNTRY" envDefault:"84"`
 	LoginPhoneAllowedCountries []string `env:"LOGIN_PHONE_ALLOWED_COUNTRIES" envSeparator:"," envDefault:"84"`
-	LoginResolveRate           string   `env:"LOGIN_RESOLVE_RATE" envDefault:"20/1m,200/24h"`
-	LoginRegisterRate          string   `env:"LOGIN_REGISTER_RATE" envDefault:"5/1m,30/24h"`
-	// LoginResolveNetRate is the aggregate limit per /24 (IPv4) or /48
-	// (IPv6) network, all purposes together (SEC-C03).
-	LoginResolveNetRate   string `env:"LOGIN_RESOLVE_NET_RATE" envDefault:"300/1m,5000/24h"`
+	// LoginSignInRate limits POST /v1/auth/login and /v1/auth/recovery per
+	// client IP (IPv6 /64); LoginRegisterRate POST /v1/auth/registration.
+	LoginSignInRate   string `env:"LOGIN_SIGNIN_RATE" envDefault:"20/1m,200/24h"`
+	LoginRegisterRate string `env:"LOGIN_REGISTER_RATE" envDefault:"5/1m,30/24h"`
+	// LoginNetRate is the aggregate limit per /24 (IPv4) or /48 (IPv6)
+	// network, all /v1/auth routes together (SEC-C03).
+	LoginNetRate string `env:"LOGIN_NET_RATE" envDefault:"300/1m,5000/24h"`
+	// LoginAccountRate limits failed sign-ins per account (ADR-0014).
+	LoginAccountRate      string `env:"LOGIN_ACCOUNT_RATE" envDefault:"10/15m,50/24h"`
 	LoginInsertGlobalRate string `env:"LOGIN_INSERT_GLOBAL_RATE" envDefault:"120/1m"`
 	CourierRecipientRate  string `env:"COURIER_RECIPIENT_RATE" envDefault:"5/1h,20/24h"`
 	// SMSProvider is sink (local/test: Mailpit), http or disabled.
@@ -126,7 +130,7 @@ const (
 
 // LoginRates are the parsed login and courier rate rules.
 type LoginRates struct {
-	Resolve, Register, ResolveNet, InsertGlobal, CourierRecipient []app.RateRule
+	SignIn, Register, Net, Account, InsertGlobal, CourierRecipient []app.RateRule
 }
 
 // ParseLoginRates parses the LOGIN_*_RATE / COURIER_RECIPIENT_RATE settings.
@@ -137,9 +141,10 @@ func (c Config) ParseLoginRates() (LoginRates, error) {
 		name, val string
 		dst       *[]app.RateRule
 	}{
-		{"LOGIN_RESOLVE_RATE", c.LoginResolveRate, &r.Resolve},
+		{"LOGIN_SIGNIN_RATE", c.LoginSignInRate, &r.SignIn},
 		{"LOGIN_REGISTER_RATE", c.LoginRegisterRate, &r.Register},
-		{"LOGIN_RESOLVE_NET_RATE", c.LoginResolveNetRate, &r.ResolveNet},
+		{"LOGIN_NET_RATE", c.LoginNetRate, &r.Net},
+		{"LOGIN_ACCOUNT_RATE", c.LoginAccountRate, &r.Account},
 		{"LOGIN_INSERT_GLOBAL_RATE", c.LoginInsertGlobalRate, &r.InsertGlobal},
 		{"COURIER_RECIPIENT_RATE", c.CourierRecipientRate, &r.CourierRecipient},
 	} {

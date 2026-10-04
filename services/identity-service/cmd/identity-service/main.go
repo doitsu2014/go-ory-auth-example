@@ -97,7 +97,7 @@ func oryHTTP(cfg platform.Config) *http.Client {
 	return &http.Client{Timeout: t}
 }
 
-// keyManager is the PII key manager that also computes login pseudonyms and
+// keyManager is the PII key manager that also computes login lookup keys and
 // seals login identifiers (ADR-0013).
 type keyManager interface {
 	app.KeyManager
@@ -203,10 +203,15 @@ func serve(ctx context.Context, cfg platform.Config, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	logins.ResolveLimiter = app.NewKeyedLimiter[string](rates.Resolve, nil)
-	logins.RegisterLimiter = app.NewKeyedLimiter[string](rates.Register, nil)
-	logins.NetLimiter = app.NewKeyedLimiter[string](rates.ResolveNet, nil)
 	logins.InsertLimiter = app.NewKeyedLimiter[string](rates.InsertGlobal, nil)
+	// Customer sign-in, registration and recovery through Kratos (ADR-0014).
+	customerAuth := &app.CustomerAuthService{
+		Logins: logins, Flows: kratos.NewSelfService(cfg.KratosPublicURL, nil),
+		SignInLimiter:   app.NewKeyedLimiter[string](rates.SignIn, nil),
+		RegisterLimiter: app.NewKeyedLimiter[string](rates.Register, nil),
+		NetLimiter:      app.NewKeyedLimiter[string](rates.Net, nil),
+		AccountLimiter:  app.NewKeyedLimiter[string](rates.Account, nil),
+	}
 	smsSender, err := newSMS(cfg, mail)
 	if err != nil {
 		return err
@@ -255,7 +260,7 @@ func serve(ctx context.Context, cfg platform.Config, log *slog.Logger) error {
 		Customers: &app.CustomerService{
 			Authz: authz, Identities: kadmin, Profiles: repos.Profiles, Tx: store, Sessions: verifier, Log: log, Logins: logins,
 		},
-		Logins: logins,
+		Auth: customerAuth,
 		Admins: &app.AdminService{
 			Authz: authz, Roles: ketoClient, Identities: kadmin, Tx: store, Idempotency: repos.Idempotency,
 			Mailer: mail, Clock: clock, Log: log, InvitationTTL: cfg.InvitationTTL,

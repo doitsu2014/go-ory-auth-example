@@ -21,6 +21,12 @@ func randomPseudonym() login.Pseudonym {
 	return p
 }
 
+func randomLookupKey() login.LookupKey {
+	var k login.LookupKey
+	_, _ = rand.Read(k[:])
+	return k
+}
+
 func TestPLIFR02_LoginIdentifierRepo(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
@@ -29,16 +35,28 @@ func TestPLIFR02_LoginIdentifierRepo(t *testing.T) {
 	if _, err := r.Get(ctx, p); !errors.Is(err, app.ErrNotFound) {
 		t.Fatalf("want not found: %v", err)
 	}
-	rec := app.LoginRecord{Pseudonym: p, Kind: login.KindEmail, Ciphertext: "vault:v1:abc", KEKVersion: 1}
+	k := randomLookupKey()
+	rec := app.LoginRecord{Pseudonym: p, LookupKey: k, Kind: login.KindEmail, Ciphertext: "vault:v1:abc", KEKVersion: 1}
 	for i, want := range []bool{true, false} {
 		ins, err := r.InsertIfAbsent(ctx, rec)
 		if err != nil || ins != want {
 			t.Fatalf("insert %d: %v %v", i, ins, err)
 		}
 	}
+	// ADR-0014: one row per address — another handle for the same lookup
+	// key is not inserted.
+	if ins, err := r.InsertIfAbsent(ctx, app.LoginRecord{Pseudonym: randomPseudonym(), LookupKey: k, Kind: login.KindEmail, Ciphertext: "vault:v1:x", KEKVersion: 1}); err != nil || ins {
+		t.Fatalf("second handle for one address: %v %v", ins, err)
+	}
 	got, err := r.Get(ctx, p)
-	if err != nil || got.IdentityID != nil || got.Kind != login.KindEmail || got.Ciphertext != "vault:v1:abc" {
+	if err != nil || got.IdentityID != nil || got.Kind != login.KindEmail || got.Ciphertext != "vault:v1:abc" || got.LookupKey != k {
 		t.Fatalf("get: %+v %v", got, err)
+	}
+	if byKey, err := r.GetByLookupKey(ctx, k); err != nil || byKey.Pseudonym != p {
+		t.Fatalf("by lookup key: %+v %v", byKey, err)
+	}
+	if _, err := r.GetByLookupKey(ctx, randomLookupKey()); !errors.Is(err, app.ErrNotFound) {
+		t.Fatalf("unknown lookup key: %v", err)
 	}
 
 	// Bind: unbound → id; same id again ok; other id refused unless stale.
@@ -64,7 +82,7 @@ func TestPLIFR02_LoginIdentifierRepo(t *testing.T) {
 	}
 	// An identity can be bound to one login only.
 	p2 := randomPseudonym()
-	_, _ = r.InsertIfAbsent(ctx, app.LoginRecord{Pseudonym: p2, Kind: login.KindPhone, Ciphertext: "vault:v1:x", KEKVersion: 1})
+	_, _ = r.InsertIfAbsent(ctx, app.LoginRecord{Pseudonym: p2, LookupKey: randomLookupKey(), Kind: login.KindPhone, Ciphertext: "vault:v1:x", KEKVersion: 1})
 	if _, err := r.Bind(ctx, p2, other, nil); !errors.Is(err, app.ErrConflict) {
 		t.Fatalf("second login for one identity: %v", err)
 	}
@@ -95,7 +113,7 @@ func TestPLIA10_StaleUnboundDeleteLosesToValidation(t *testing.T) {
 	ctx := context.Background()
 	r := s.Repos().Logins
 	p := randomPseudonym()
-	_, _ = r.InsertIfAbsent(ctx, app.LoginRecord{Pseudonym: p, Kind: login.KindEmail, Ciphertext: "vault:v1:a", KEKVersion: 1})
+	_, _ = r.InsertIfAbsent(ctx, app.LoginRecord{Pseudonym: p, LookupKey: randomLookupKey(), Kind: login.KindEmail, Ciphertext: "vault:v1:a", KEKVersion: 1})
 	defer func() { _, _ = r.Delete(ctx, p, false) }()
 	before := time.Now().Add(time.Hour)
 	recs, err := r.ListStaleUnbound(ctx, before, 10000)

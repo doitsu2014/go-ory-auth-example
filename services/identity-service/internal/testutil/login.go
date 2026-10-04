@@ -3,6 +3,7 @@ package testutil
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"sort"
 	"sync"
 	"time"
@@ -24,6 +25,11 @@ func (r loginRepo) InsertIfAbsent(_ context.Context, rec app.LoginRecord) (bool,
 	if _, ok := r.s.Logins[rec.Pseudonym]; ok {
 		return false, nil
 	}
+	for _, other := range r.s.Logins {
+		if other.LookupKey == rec.LookupKey {
+			return false, nil
+		}
+	}
 	now := r.s.now()
 	rec.CreatedAt, rec.LastValidatedAt = now, now
 	if rec.IdentityID != nil {
@@ -41,6 +47,20 @@ func (r loginRepo) Get(_ context.Context, p login.Pseudonym) (app.LoginRecord, e
 		return app.LoginRecord{}, app.ErrNotFound
 	}
 	return rec, nil
+}
+
+func (r loginRepo) GetByLookupKey(_ context.Context, k login.LookupKey) (app.LoginRecord, error) {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+	if r.s.LoginErr != nil {
+		return app.LoginRecord{}, r.s.LoginErr
+	}
+	for _, rec := range r.s.Logins {
+		if rec.LookupKey == k {
+			return rec, nil
+		}
+	}
+	return app.LoginRecord{}, app.ErrNotFound
 }
 
 func (r loginRepo) GetMany(_ context.Context, ps []login.Pseudonym) (map[login.Pseudonym]app.LoginRecord, error) {
@@ -368,4 +388,110 @@ func (f *Identities) AddCustomer(loginID string, verified bool) identity.Identit
 		i.Email = loginID
 	}
 	return f.Add(i)
+}
+
+// AuthFlowCall is one AuthFlows call.
+type AuthFlowCall struct {
+	Op         string // login | register | recovery
+	Identifier string
+	Client     app.FlowClient
+}
+
+// AuthFlows is an in-memory Kratos for the customer auth flows: accounts are
+// identifier → password.
+type AuthFlows struct {
+	mu        sync.Mutex
+	Passwords map[string]string
+	Calls     []AuthFlowCall
+	// Err fails every call (e.g. app.ErrDependencyUnavailable); RegisterErr
+	// fails registrations (e.g. a password policy *app.AuthFlowError).
+	Err, RegisterErr error
+}
+
+// NewAuthFlows creates an empty fake.
+func NewAuthFlows() *AuthFlows { return &AuthFlows{Passwords: map[string]string{}} }
+
+func (f *AuthFlows) record(op, identifier string, c app.FlowClient) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.Calls = append(f.Calls, AuthFlowCall{Op: op, Identifier: identifier, Client: c})
+	return f.Err
+}
+
+// CallsOf returns the calls of one operation.
+func (f *AuthFlows) CallsOf(op string) []AuthFlowCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []AuthFlowCall
+	for _, c := range f.Calls {
+		if c.Op == op {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func fakeSession(identifier string) app.AuthSession {
+	b, _ := json.Marshal(map[string]any{"id": "sess", "identity": map[string]any{"traits": map[string]any{"login_id": identifier}}})
+	return app.AuthSession{Token: "token-" + identifier, Session: b}
+}
+
+// Login implements app.AuthFlows.
+func (f *AuthFlows) Login(_ context.Context, c app.FlowClient, identifier, password string) (app.AuthSession, error) {
+	if err := f.record("login", identifier, c); err != nil {
+		return app.AuthSession{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if pw, ok := f.Passwords[identifier]; !ok || pw != password {
+		return app.AuthSession{}, &app.AuthFlowError{Messages: []app.FlowMessage{{Field: app.FlowFieldForm, ID: app.KratosInvalidCredentials}}}
+	}
+	return fakeSession(identifier), nil
+}
+
+// Register implements app.AuthFlows.
+func (f *AuthFlows) Register(_ context.Context, c app.FlowClient, loginID, password string) (app.AuthSession, error) {
+	if err := f.record("register", loginID, c); err != nil {
+		return app.AuthSession{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.RegisterErr != nil {
+		return app.AuthSession{}, f.RegisterErr
+	}
+	if _, ok := f.Passwords[loginID]; ok {
+		return app.AuthSession{}, &app.AuthFlowError{Messages: []app.FlowMessage{{Field: app.FlowFieldLogin, ID: 4000007}}}
+	}
+	f.Passwords[loginID] = password
+	s := fakeSession(loginID)
+	s.VerificationFlowID = "verification-flow"
+	return s, nil
+}
+
+// StartRecovery implements app.AuthFlows.
+func (f *AuthFlows) StartRecovery(_ context.Context, c app.FlowClient, email string) (string, error) {
+	if err := f.record("recovery", email, c); err != nil {
+		return "", err
+	}
+	return RecoveryFlowID, nil
+}
+
+// RecoveryFlowID is the flow id every fake recovery returns.
+const RecoveryFlowID = "6f1c2b8e-4d3a-4b6f-9e2d-0c1a2b3c4d5e"
+
+// RecoveryCode is the only code the fake accepts.
+const RecoveryCode = "123456"
+
+// SubmitRecoveryCode implements app.AuthFlows.
+func (f *AuthFlows) SubmitRecoveryCode(_ context.Context, c app.FlowClient, flowID, code string) (app.RecoveryGrant, error) {
+	if err := f.record("recovery-code", flowID, c); err != nil {
+		return app.RecoveryGrant{}, err
+	}
+	switch {
+	case flowID != RecoveryFlowID:
+		return app.RecoveryGrant{}, app.ErrAuthFlowExpired
+	case code != RecoveryCode:
+		return app.RecoveryGrant{}, &app.AuthFlowError{Messages: []app.FlowMessage{{Field: app.FlowFieldForm, ID: 4060006}}}
+	}
+	return app.RecoveryGrant{SessionToken: "token-recovery", SettingsFlowID: "settings-flow"}, nil
 }

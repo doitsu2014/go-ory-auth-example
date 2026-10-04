@@ -77,19 +77,17 @@ func (s *LoginMigrationService) one(ctx context.Context, it identity.Identity, d
 	if err != nil {
 		return fmt.Errorf("legacy email: %w", err) // value-free (*login.ErrInvalid)
 	}
-	p, err := s.Logins.pseudonym(ctx, id)
-	if err != nil {
-		return err
-	}
 	if dryRun {
 		res.Migrated++
 		return nil
 	}
-	if _, err := s.Logins.store(ctx, id, p, &it.ID, it.EmailVerified); err != nil {
+	// A new random handle, or the existing row's (an unfinished
+	// registration for the same address): bind it, and record the
+	// verification state.
+	p, err := s.Logins.claim(ctx, id, &it.ID, it.EmailVerified)
+	if err != nil {
 		return err
 	}
-	// The row may have existed unbound (a registration resolve for the
-	// same address): bind it, and record the verification state.
 	if _, err := s.Logins.bind(ctx, it.ID, p); err != nil {
 		return fmt.Errorf("collision: %w", err)
 	}

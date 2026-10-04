@@ -294,14 +294,14 @@ type Repos struct {
 	Dispatches   CourierDispatchRepo
 }
 
-// LoginKeys computes login pseudonyms and seals login identifiers in the key
-// manager (PLI DD-01, DD-03). The HMAC key and the encryption key are
+// LoginKeys computes login lookup keys and seals login identifiers in the key
+// manager (PLI DD-01, DD-03, ADR-0014). The HMAC key and the encryption key are
 // distinct and never leave the key manager.
 // Errors: ErrDependencyUnavailable, ErrDataIntegrity (OpenLogins
 // authentication failure). Errors never carry inputs or key material.
 type LoginKeys interface {
-	// Pseudonym returns the keyed HMAC of input (pinned key version).
-	Pseudonym(ctx context.Context, input []byte) (login.Pseudonym, error)
+	// LookupKey returns the keyed HMAC of input (pinned key version).
+	LookupKey(ctx context.Context, input []byte) (login.LookupKey, error)
 	// SealLogin encrypts plaintext bound to ad; the ciphertext is opaque
 	// ("vault:vN:…") and kekVersion is N.
 	SealLogin(ctx context.Context, ad, plaintext []byte) (ciphertext string, kekVersion int, err error)
@@ -318,9 +318,11 @@ type SealedLogin struct {
 }
 
 // LoginRecord is a login_identifier row: the encrypted login identifier
-// stored under its pseudonym (PLI-FR-02).
+// stored under its Kratos handle (Pseudonym) and found by its LookupKey
+// (PLI-FR-02, ADR-0014).
 type LoginRecord struct {
 	Pseudonym       login.Pseudonym
+	LookupKey       login.LookupKey
 	Kind            login.Kind
 	Ciphertext      string
 	KEKVersion      int
@@ -334,10 +336,12 @@ type LoginRecord struct {
 // LoginIdentifierRepo stores encrypted login identifiers. Errors never carry
 // column values.
 type LoginIdentifierRepo interface {
-	// InsertIfAbsent stores r unless the pseudonym exists.
+	// InsertIfAbsent stores r unless its pseudonym or lookup key exists.
 	InsertIfAbsent(ctx context.Context, r LoginRecord) (inserted bool, err error)
 	// Get returns the record or ErrNotFound.
 	Get(ctx context.Context, p login.Pseudonym) (LoginRecord, error)
+	// GetByLookupKey returns the record of an address or ErrNotFound.
+	GetByLookupKey(ctx context.Context, k login.LookupKey) (LoginRecord, error)
 	// GetMany returns the records that exist.
 	GetMany(ctx context.Context, ps []login.Pseudonym) (map[login.Pseudonym]LoginRecord, error)
 	// GetByIdentity returns the record bound to the identity or ErrNotFound.

@@ -26,7 +26,7 @@ const (
 	// PlaneMachine is /m2m/v1: Hydra client_credentials JWTs only.
 	PlaneMachine
 	// PlanePublic is /v1/auth/*: no credential, rate limited per client IP
-	// (login identifier resolution, ADR-0013).
+	// (customer login, registration and recovery, ADR-0014).
 	PlanePublic
 )
 
@@ -197,14 +197,27 @@ func routingPath(r *http.Request) string {
 	return r.URL.Path
 }
 
-type publicIPKey struct{}
+type publicClientKey struct{}
 
-func withPublicClientIP(ctx context.Context, ip netip.Addr) context.Context {
-	return context.WithValue(ctx, publicIPKey{}, ip)
+// publicClient is the end client of a public-plane request.
+type publicClient struct {
+	ip        netip.Addr
+	userAgent string
+}
+
+func withPublicClient(ctx context.Context, ip netip.Addr, userAgent string) context.Context {
+	return context.WithValue(ctx, publicClientKey{}, publicClient{ip: ip, userAgent: userAgent})
 }
 
 // PublicClientIPFrom returns the client IP of a public-plane request.
 func PublicClientIPFrom(ctx context.Context) (netip.Addr, bool) {
-	ip, ok := ctx.Value(publicIPKey{}).(netip.Addr)
-	return ip, ok
+	c, ok := ctx.Value(publicClientKey{}).(publicClient)
+	return c.ip, ok
+}
+
+// PublicFlowClientFrom returns the end client of a public-plane request, as
+// forwarded to Kratos.
+func PublicFlowClientFrom(ctx context.Context) (app.FlowClient, bool) {
+	c, ok := ctx.Value(publicClientKey{}).(publicClient)
+	return app.FlowClient{IP: c.ip, UserAgent: c.userAgent}, ok
 }

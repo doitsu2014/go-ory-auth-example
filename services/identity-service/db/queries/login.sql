@@ -1,22 +1,29 @@
 -- name: InsertLoginIdentifier :execrows
--- Registration resolve (PLI-FR-02): idempotent insert.
-INSERT INTO login_identifier (pseudonym, kind, value_ct, kek_version, identity_id, bound_at, legacy_verified)
-VALUES (@pseudonym, @kind, @value_ct, @kek_version, sqlc.narg(identity_id),
+-- Registration (PLX-FR-02): idempotent insert. A row for the same address
+-- (lookup_key) or handle (pseudonym) wins; the caller re-reads it.
+INSERT INTO login_identifier (pseudonym, lookup_key, kind, value_ct, kek_version, identity_id, bound_at, legacy_verified)
+VALUES (@pseudonym, @lookup_key, @kind, @value_ct, @kek_version, sqlc.narg(identity_id),
         CASE WHEN sqlc.narg(identity_id)::uuid IS NULL THEN NULL ELSE now() END, @legacy_verified)
-ON CONFLICT (pseudonym) DO NOTHING;
+ON CONFLICT DO NOTHING;
 
 -- name: GetLoginIdentifier :one
-SELECT pseudonym, kind, value_ct, kek_version, identity_id, bound_at, legacy_verified, created_at, last_validated_at
+SELECT pseudonym, kind, value_ct, kek_version, identity_id, bound_at, legacy_verified, created_at, last_validated_at, lookup_key
 FROM login_identifier
 WHERE pseudonym = @pseudonym;
 
+-- name: GetLoginIdentifierByLookupKey :one
+-- Sign-in, registration, recovery and admin lookup (ADR-0014).
+SELECT pseudonym, kind, value_ct, kek_version, identity_id, bound_at, legacy_verified, created_at, last_validated_at, lookup_key
+FROM login_identifier
+WHERE lookup_key = @lookup_key;
+
 -- name: GetLoginIdentifiers :many
-SELECT pseudonym, kind, value_ct, kek_version, identity_id, bound_at, legacy_verified, created_at, last_validated_at
+SELECT pseudonym, kind, value_ct, kek_version, identity_id, bound_at, legacy_verified, created_at, last_validated_at, lookup_key
 FROM login_identifier
 WHERE pseudonym = ANY(@pseudonyms::bytea[]);
 
 -- name: GetLoginIdentifierByIdentity :one
-SELECT pseudonym, kind, value_ct, kek_version, identity_id, bound_at, legacy_verified, created_at, last_validated_at
+SELECT pseudonym, kind, value_ct, kek_version, identity_id, bound_at, legacy_verified, created_at, last_validated_at, lookup_key
 FROM login_identifier
 WHERE identity_id = @identity_id;
 
@@ -37,7 +44,7 @@ UPDATE login_identifier SET last_validated_at = now() WHERE pseudonym = @pseudon
 
 -- name: ListStaleUnboundLoginIdentifiers :many
 -- Purge (A10): unbound rows not validated since @before.
-SELECT pseudonym, kind, value_ct, kek_version, identity_id, bound_at, legacy_verified, created_at, last_validated_at
+SELECT pseudonym, kind, value_ct, kek_version, identity_id, bound_at, legacy_verified, created_at, last_validated_at, lookup_key
 FROM login_identifier
 WHERE identity_id IS NULL AND last_validated_at < @before
 ORDER BY last_validated_at
@@ -50,14 +57,14 @@ DELETE FROM login_identifier
 WHERE pseudonym = @pseudonym AND identity_id IS NULL AND last_validated_at < @before;
 
 -- name: ListBoundLoginIdentifiers :many
-SELECT pseudonym, kind, value_ct, kek_version, identity_id, bound_at, legacy_verified, created_at, last_validated_at
+SELECT pseudonym, kind, value_ct, kek_version, identity_id, bound_at, legacy_verified, created_at, last_validated_at, lookup_key
 FROM login_identifier
 WHERE identity_id IS NOT NULL AND pseudonym > @after
 ORDER BY pseudonym
 LIMIT @page_limit;
 
 -- name: ListAllLoginIdentifiers :many
-SELECT pseudonym, kind, value_ct, kek_version, identity_id, bound_at, legacy_verified, created_at, last_validated_at
+SELECT pseudonym, kind, value_ct, kek_version, identity_id, bound_at, legacy_verified, created_at, last_validated_at, lookup_key
 FROM login_identifier
 WHERE pseudonym > @after
 ORDER BY pseudonym

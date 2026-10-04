@@ -43,9 +43,9 @@ type Env struct {
 	// ClientTagKey is the in-process service's M2M_CLIENT_TAG_KEY (tests run
 	// their own service instance, so any ≥ 32-byte key works).
 	ClientTagKey []byte
-	// API is the running stack's identity-service (login identifier
-	// resolution; it shares the database and OpenBao keys with in-process
-	// test services, so pseudonyms match).
+	// API is the running stack's identity-service (customer login,
+	// registration and recovery, ADR-0014; it shares the database and
+	// OpenBao keys with in-process test services and Kratos's webhooks).
 	API string
 }
 
@@ -205,39 +205,37 @@ func (f Flow) TOTPSecret() string {
 	return ""
 }
 
-// Resolve returns the pseudonymous login identifier of an email or phone
-// (POST /v1/auth/identifiers, ADR-0013).
-func (e Env) Resolve(t *testing.T, kind, value, purpose string) string {
-	t.Helper()
-	var out struct {
-		Identifier string `json:"identifier"`
-	}
-	st, _ := JSON(t, nil, "POST", e.API+"/v1/auth/identifiers", nil,
-		map[string]any{"type": kind, "value": value, "purpose": purpose}, &out)
-	if st != 200 || out.Identifier == "" {
-		t.Fatalf("resolve %s: %d", purpose, st)
-	}
-	return out.Identifier
-}
-
-// RegisterCustomer resolves the email, registers via the native API flow
-// with the pseudonym and returns the flow response (session token, identity
-// id).
+// RegisterCustomer registers through identity-service
+// (POST /v1/auth/registration, ADR-0014) and returns the response (session
+// token, session with the identity id).
 func (e Env) RegisterCustomer(t *testing.T, email string) Flow {
 	t.Helper()
-	loginID := e.Resolve(t, "email", email, "registration")
-	var flow Flow
-	if st, _ := JSON(t, nil, "GET", e.KratosPublic+"/self-service/registration/api", nil, nil, &flow); st != 200 {
-		t.Fatalf("registration flow: %d", st)
-	}
 	var out Flow
-	st, _ := JSON(t, nil, "POST", e.KratosPublic+"/self-service/registration?flow="+flow.ID, nil, map[string]any{
-		"method": "password", "password": Password, "traits": map[string]any{"login_id": loginID},
+	st, _ := JSON(t, nil, "POST", e.API+"/v1/auth/registration", nil, map[string]any{
+		"login": map[string]any{"type": "email", "value": email}, "password": Password,
 	}, &out)
 	if st != 200 || out.SessionToken == "" {
-		t.Fatalf("register: %d %+v", st, out.UI.Messages)
+		t.Fatalf("register: %d", st)
 	}
 	return out
+}
+
+// Handle returns the session owner's Kratos login handle (whoami
+// traits.login_id): what the app uses for verification and refresh logins.
+func (e Env) Handle(t *testing.T, sessionToken string) string {
+	t.Helper()
+	var out struct {
+		Identity struct {
+			Traits struct {
+				LoginID string `json:"login_id"`
+			} `json:"traits"`
+		} `json:"identity"`
+	}
+	st, _ := JSON(t, nil, "GET", e.KratosPublic+"/sessions/whoami", http.Header{"X-Session-Token": {sessionToken}}, nil, &out)
+	if st != 200 || out.Identity.Traits.LoginID == "" {
+		t.Fatalf("whoami: %d", st)
+	}
+	return out.Identity.Traits.LoginID
 }
 
 // RegisterCustomerTraits submits a native registration with arbitrary traits
@@ -271,11 +269,15 @@ func (e Env) LoginAPI(t *testing.T, email string) (int, Flow) {
 	return st, out
 }
 
-// LoginCustomerAPI resolves the customer's email and logs in via the
-// native API flow with the pseudonym.
+// LoginCustomerAPI signs a customer in through identity-service
+// (POST /v1/auth/login, ADR-0014).
 func (e Env) LoginCustomerAPI(t *testing.T, email string) (int, Flow) {
 	t.Helper()
-	return e.LoginAPI(t, e.Resolve(t, "email", email, "sign_in"))
+	var out Flow
+	st, _ := JSON(t, nil, "POST", e.API+"/v1/auth/login", nil, map[string]any{
+		"login": map[string]any{"type": "email", "value": email}, "password": Password,
+	}, &out)
+	return st, out
 }
 
 // Browser is a cookie-carrying browser-flow client.
@@ -428,14 +430,15 @@ func (e Env) mailIDs(t *testing.T, addr string) []string {
 // through the Kratos http courier and identity-service (ADR-0013), so the
 // registration mail can land late: wait for it first so its code is not
 // mistaken for ours, and retry with a new flow if the code was not accepted.
-func (e Env) VerifyEmail(t *testing.T, email string) {
+// Kratos is addressed with the owner's handle (sessionToken's whoami).
+func (e Env) VerifyEmail(t *testing.T, email, sessionToken string) {
 	t.Helper()
 	deadline := time.Now().Add(15 * time.Second)
 	for len(e.mailIDs(t, email)) == 0 && time.Now().Before(deadline) {
 		time.Sleep(300 * time.Millisecond)
 	}
 	for attempt := 1; ; attempt++ {
-		state := e.verifyOnce(t, email)
+		state := e.verifyOnce(t, email, e.Handle(t, sessionToken))
 		if state == "passed_challenge" {
 			return
 		}
@@ -445,13 +448,13 @@ func (e Env) VerifyEmail(t *testing.T, email string) {
 	}
 }
 
-func (e Env) verifyOnce(t *testing.T, email string) string {
+func (e Env) verifyOnce(t *testing.T, email, handle string) string {
 	t.Helper()
 	before := len(e.mailIDs(t, email))
 	var flow Flow
 	JSON(t, nil, "GET", e.KratosPublic+"/self-service/verification/api", nil, nil, &flow)
 	if st, _ := JSON(t, nil, "POST", e.KratosPublic+"/self-service/verification?flow="+flow.ID, nil,
-		map[string]any{"method": "code", "email": e.Resolve(t, "email", email, "verification")}, nil); st != 200 {
+		map[string]any{"method": "code", "email": handle}, nil); st != 200 {
 		t.Fatalf("request verification code: %d", st)
 	}
 	var newest string

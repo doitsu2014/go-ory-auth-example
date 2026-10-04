@@ -12,16 +12,16 @@ import (
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/app"
 )
 
-func TestPLIFR01_PseudonymPinsKeyVersion(t *testing.T) {
+func TestPLXFR04_LookupKeyPinsKeyVersion(t *testing.T) {
 	c, f, _ := setup(t)
-	p1, err := c.Pseudonym(context.Background(), []byte("login-id/v1\x00email\x00a@example.com"))
+	p1, err := c.LookupKey(context.Background(), []byte("login-id/v1\x00email\x00a@example.com"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	p2, _ := c.Pseudonym(context.Background(), []byte("login-id/v1\x00email\x00a@example.com"))
-	p3, _ := c.Pseudonym(context.Background(), []byte("login-id/v1\x00email\x00b@example.com"))
+	p2, _ := c.LookupKey(context.Background(), []byte("login-id/v1\x00email\x00a@example.com"))
+	p3, _ := c.LookupKey(context.Background(), []byte("login-id/v1\x00email\x00b@example.com"))
 	if p1 != p2 || p1 == p3 {
-		t.Fatal("pseudonym must be deterministic per input")
+		t.Fatal("lookup key must be deterministic per input")
 	}
 	if f.hmacBody["key_version"] != float64(LoginHMACKeyVersion) {
 		t.Fatalf("key_version not pinned: %v", f.hmacBody["key_version"])
@@ -58,7 +58,7 @@ func TestPLINFR03_SealOpenBatchBoundToAD(t *testing.T) {
 func TestPLINFR06_LoginKeysUnavailable(t *testing.T) {
 	c, f, _ := setup(t)
 	f.status = http.StatusServiceUnavailable
-	if _, err := c.Pseudonym(context.Background(), []byte("x")); !errors.Is(err, app.ErrDependencyUnavailable) {
+	if _, err := c.LookupKey(context.Background(), []byte("x")); !errors.Is(err, app.ErrDependencyUnavailable) {
 		t.Fatalf("hmac: %v", err)
 	}
 	if _, _, err := c.OpenLogins(context.Background(), []app.SealedLogin{{AD: []byte("a"), Ciphertext: "vault:v1:x"}}); !errors.Is(err, app.ErrDependencyUnavailable) {

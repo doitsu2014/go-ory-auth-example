@@ -33,8 +33,11 @@ type Policy struct {
 // entry, an admin route declares neither a permission nor Self, a machine
 // route declares no scope, or an entry has no route (see ValidatePolicies).
 var RoutePolicies = map[string]Policy{
-	// Public (no credential, per-IP limits in the use case). PLI-FR-01.
-	"POST /v1/auth/identifiers": {Plane: PlanePublic},
+	// Public (no credential, per-IP limits in the use case). PLX-FR-01..03.
+	"POST /v1/auth/login":         {Plane: PlanePublic},
+	"POST /v1/auth/registration":  {Plane: PlanePublic},
+	"POST /v1/auth/recovery":      {Plane: PlanePublic},
+	"POST /v1/auth/recovery/code": {Plane: PlanePublic},
 
 	// Customer plane (bearer only). FR-09, FR-10.
 	"GET /v1/me":   {Plane: PlaneCustomer, Self: true},

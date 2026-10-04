@@ -190,18 +190,18 @@ func (m *KMS) BlindIndex(_ context.Context, input []byte) (app.BlindIndex, error
 	return app.BlindIndex{Sum: h.Sum(nil), KeyVersion: 1}, nil
 }
 
-// Pseudonym implements app.LoginKeys (HMAC-SHA256, key version 1).
-func (m *KMS) Pseudonym(_ context.Context, input []byte) (login.Pseudonym, error) {
+// LookupKey implements app.LoginKeys (HMAC-SHA256, key version 1).
+func (m *KMS) LookupKey(_ context.Context, input []byte) (login.LookupKey, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.failWith != nil {
-		return login.Pseudonym{}, m.failWith
+		return login.LookupKey{}, m.failWith
 	}
 	h := hmac.New(sha256.New, m.loginHMAC)
 	h.Write(input)
-	var p login.Pseudonym
-	copy(p[:], h.Sum(nil))
-	return p, nil
+	var k login.LookupKey
+	copy(k[:], h.Sum(nil))
+	return k, nil
 }
 
 func loginAEAD(key []byte) (cipher.AEAD, error) {

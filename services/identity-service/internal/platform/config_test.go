@@ -22,9 +22,9 @@ func validConfig() Config {
 		PIIOpenBaoLoginHMACKeyName: "identity-login-pseudonym", PIIOpenBaoLoginKEKName: "identity-login-kek",
 		KratosCourierAPIKey: strings.Repeat("c", 32), CourierDedupeSecret: key32("d"), LoginMigrationPhase: "transition",
 		LoginPhoneDefaultCountry: "84", LoginPhoneAllowedCountries: []string{"84"},
-		LoginResolveRate: "20/1m,200/24h", LoginRegisterRate: "5/1m,30/24h", LoginInsertGlobalRate: "120/1m",
+		LoginSignInRate: "20/1m,200/24h", LoginAccountRate: "10/15m,50/24h", LoginRegisterRate: "5/1m,30/24h", LoginInsertGlobalRate: "120/1m",
 		CourierRecipientRate: "5/1h,20/24h", SMSProvider: SMSProviderDisabled, SMSDailyBudget: 1000,
-		SMSCountryDailyBudget: 1000, LoginResolveNetRate: "300/1m,5000/24h",
+		SMSCountryDailyBudget: 1000, LoginNetRate: "300/1m,5000/24h",
 	}
 }
 
@@ -34,7 +34,7 @@ func TestPLIValidateLogin(t *testing.T) {
 		"short dedupe secret":       func(c *Config) { c.CourierDedupeSecret = "c2hvcnQ=" },
 		"bad phase":                 func(c *Config) { c.LoginMigrationPhase = "done" },
 		"bad country":               func(c *Config) { c.LoginPhoneAllowedCountries = []string{"+84"} },
-		"bad rate":                  func(c *Config) { c.LoginResolveRate = "20/forever" },
+		"bad rate":                  func(c *Config) { c.LoginSignInRate = "20/forever" },
 		"sms sink in production":    func(c *Config) { c.SMSProvider = SMSProviderSink },
 		"sms http without url":      func(c *Config) { c.SMSProvider = SMSProviderHTTP },
 		"login key = pii key":       func(c *Config) { c.PIIOpenBaoLoginKEKName = c.PIIOpenBaoKEKName },

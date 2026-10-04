@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/oapi-codegen/nullable"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
@@ -29,8 +31,8 @@ type Server struct {
 	// Machine serves /m2m/v1; ServiceClients the admin service-client routes.
 	Machine        *app.MachineService
 	ServiceClients *app.ServiceClientService
-	// Logins serves POST /v1/auth/identifiers (ADR-0013).
-	Logins *app.LoginIdentifierService
+	// Auth serves POST /v1/auth/{login,registration,recovery} (ADR-0014).
+	Auth *app.CustomerAuthService
 }
 
 var _ gen.StrictServerInterface = (*Server)(nil)
@@ -417,26 +419,91 @@ func toMaskedLogin(m app.MaskedLogin) gen.MaskedLogin {
 	return gen.MaskedLogin{Type: gen.LoginType(m.Kind), Masked: m.Masked}
 }
 
-// ResolveLoginIdentifier implements POST /v1/auth/identifiers (public).
-func (s *Server) ResolveLoginIdentifier(ctx context.Context, req gen.ResolveLoginIdentifierRequestObject) (gen.ResolveLoginIdentifierResponseObject, error) {
+// publicFlowClient returns the end client of a public request.
+func (s *Server) publicFlowClient(ctx context.Context) (app.FlowClient, error) {
+	c, ok := PublicFlowClientFrom(ctx)
+	if !ok || s.Auth == nil {
+		return app.FlowClient{}, app.ErrDependencyUnavailable
+	}
+	return c, nil
+}
+
+func toAuthSession(v app.AuthSession) gen.CustomerAuthSession {
+	out := gen.CustomerAuthSession{SessionToken: v.Token, Session: v.Session}
+	if id, err := uuid.Parse(v.VerificationFlowID); err == nil {
+		out.VerificationFlowId = &id
+	}
+	return out
+}
+
+// CustomerLogin implements POST /v1/auth/login (public, ADR-0014).
+func (s *Server) CustomerLogin(ctx context.Context, req gen.CustomerLoginRequestObject) (gen.CustomerLoginResponseObject, error) {
 	if req.Body == nil {
 		return nil, app.NewValidationError("body", "required")
 	}
-	ip, ok := PublicClientIPFrom(ctx)
-	if !ok || s.Logins == nil {
-		return nil, app.ErrDependencyUnavailable
+	c, err := s.publicFlowClient(ctx)
+	if err != nil {
+		return nil, err
 	}
-	id, err := s.Logins.Resolve(ctx, app.ResolveRequest{
-		ClientIP: ip, Type: string(req.Body.Type), Value: req.Body.Value, Purpose: string(req.Body.Purpose),
+	v, err := s.Auth.Login(ctx, app.Credentials{
+		Client: c, Type: string(req.Body.Login.Type), Value: req.Body.Login.Value, Password: req.Body.Password,
 	})
 	if err != nil {
 		return nil, err
 	}
-	noStore := "no-store"
-	return gen.ResolveLoginIdentifier200JSONResponse{
-		Body:    gen.ResolvedLoginIdentifier{Identifier: id},
-		Headers: gen.ResolveLoginIdentifier200ResponseHeaders{CacheControl: &noStore},
-	}, nil
+	return gen.CustomerLogin200JSONResponse(toAuthSession(v)), nil
+}
+
+// CustomerRegistration implements POST /v1/auth/registration (public).
+func (s *Server) CustomerRegistration(ctx context.Context, req gen.CustomerRegistrationRequestObject) (gen.CustomerRegistrationResponseObject, error) {
+	if req.Body == nil {
+		return nil, app.NewValidationError("body", "required")
+	}
+	c, err := s.publicFlowClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	v, err := s.Auth.Register(ctx, app.Credentials{
+		Client: c, Type: string(req.Body.Login.Type), Value: req.Body.Login.Value, Password: req.Body.Password,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return gen.CustomerRegistration200JSONResponse(toAuthSession(v)), nil
+}
+
+// CustomerRecovery implements POST /v1/auth/recovery (public).
+func (s *Server) CustomerRecovery(ctx context.Context, req gen.CustomerRecoveryRequestObject) (gen.CustomerRecoveryResponseObject, error) {
+	if req.Body == nil {
+		return nil, app.NewValidationError("body", "required")
+	}
+	c, err := s.publicFlowClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ref, err := s.Auth.StartRecovery(ctx, app.RecoveryRequest{
+		Client: c, Type: string(req.Body.Login.Type), Value: req.Body.Login.Value,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return gen.CustomerRecovery200JSONResponse{RecoveryId: ref}, nil
+}
+
+// CustomerRecoveryCode implements POST /v1/auth/recovery/code (public).
+func (s *Server) CustomerRecoveryCode(ctx context.Context, req gen.CustomerRecoveryCodeRequestObject) (gen.CustomerRecoveryCodeResponseObject, error) {
+	if req.Body == nil {
+		return nil, app.NewValidationError("body", "required")
+	}
+	c, err := s.publicFlowClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	g, err := s.Auth.SubmitRecoveryCode(ctx, app.RecoveryCodeRequest{Client: c, RecoveryID: req.Body.RecoveryId, Code: req.Body.Code})
+	if err != nil {
+		return nil, err
+	}
+	return gen.CustomerRecoveryCode200JSONResponse{SessionToken: g.SessionToken, SettingsFlowId: g.SettingsFlowID}, nil
 }
 
 // toAdmin converts an admin. The contract requires a role; an admin identity

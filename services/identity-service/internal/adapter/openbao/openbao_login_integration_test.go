@@ -12,19 +12,23 @@ import (
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/login"
 )
 
-// TestPLINFR02_LoginKeysAgainstOpenBao: pseudonym HMAC (pinned v1) and the
-// login vault AEAD work with the app token; AD binds kind and pseudonym.
+// TestPLINFR02_LoginKeysAgainstOpenBao: lookup-key HMAC (pinned v1) and the
+// login vault AEAD work with the app token; AD binds kind and handle.
 func TestPLINFR02_LoginKeysAgainstOpenBao(t *testing.T) {
 	c, _ := realClient(t)
 	ctx := context.Background()
 	id, _ := login.Parse(login.KindEmail, "openbao-itest@example.com", login.PhonePolicy{})
-	p1, err := c.Pseudonym(ctx, login.PseudonymInput(id))
+	k1, err := c.LookupKey(ctx, login.LookupInput(id))
 	if err != nil {
 		t.Fatal(err)
 	}
-	p2, _ := c.Pseudonym(ctx, login.PseudonymInput(id))
-	if p1 != p2 || !login.IsPseudonym(p1.String()) {
-		t.Fatal("pseudonym must be deterministic and well-formed")
+	k2, _ := c.LookupKey(ctx, login.LookupInput(id))
+	if k1 != k2 || k1 == (login.LookupKey{}) {
+		t.Fatal("lookup key must be deterministic and non-zero")
+	}
+	p1, err := login.NewPseudonym()
+	if err != nil {
+		t.Fatal(err)
 	}
 	ad := login.AAD(id.Kind(), p1)
 	ct, v, err := c.SealLogin(ctx, ad, []byte(id.Value()))
