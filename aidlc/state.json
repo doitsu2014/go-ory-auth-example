@@ -2,12 +2,12 @@
   "workflowVersion": "1.0.0",
   "engineVersion": "0.1.0",
   "activeIntent": {
-    "id": "261004-pseudonymize-customer-login",
-    "label": "pseudonymize-customer-login",
-    "description": "Pseudonymize customer login identifiers in Kratos (option B): Kratos stores only HMAC blind-index identifiers for customer email/phone; a proxy/BFF rewrites identifiers before forwarding to Kratos; Kratos courier uses http delivery strategy to an identity-service webhook that resolves the real address from encrypted PII and sends mail/SMS. Do it rigorously.",
+    "id": "261004-refactor-customer-login",
+    "label": "refactor-customer-login",
+    "description": "Refactor customer login to a backend proxy with opaque Kratos identifiers (partially supersedes ADR-0013): mobile sends email/phone + password to identity-service; identity-service HMACs via OpenBao, looks up the Kratos identifier in the PII vault (existing users keep their current login_id string, new users get a random opaque id), drives Kratos native API flows server-to-server (login, registration, verification, recovery via admin recovery code, settings password change, logout), returns the session token. Remove the public resolve endpoint /v1/auth/identifiers (oracle C1) and the extra client round trip (C3). Update mobile app, docs (ADR-0014, chapter 10, roadmap) and tests.",
     "scope": "feature",
     "space": "default",
-    "createdAt": "2026-10-04T02:04:27.934Z"
+    "createdAt": "2026-10-04T06:51:06.536Z"
   },
   "currentStage": null,
   "parked": false,
@@ -16,115 +16,113 @@
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-04T02:07:08.331Z",
+      "updatedAt": "2026-10-04T06:56:20.341Z",
       "autoApproved": true
     },
     "requirements-analysis": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-04T02:09:46.270Z",
+      "updatedAt": "2026-10-04T06:56:42.926Z",
       "autoApproved": true
     },
     "feasibility-assessment": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-04T02:13:40.823Z",
+      "updatedAt": "2026-10-04T06:57:27.514Z",
       "autoApproved": true
     },
     "architecture-design": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-04T02:19:15.478Z",
+      "updatedAt": "2026-10-04T06:57:51.756Z",
       "autoApproved": true
     },
     "api-contract": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-04T02:20:50.788Z",
+      "updatedAt": "2026-10-04T06:58:31.250Z",
       "autoApproved": true
     },
     "design-patterns": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-04T02:21:36.717Z",
+      "updatedAt": "2026-10-04T06:58:42.600Z",
       "autoApproved": true
     },
     "technical-spec": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-04T02:23:41.785Z",
+      "updatedAt": "2026-10-04T06:58:59.201Z",
       "autoApproved": true
     },
     "task-planning": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-04T02:24:31.182Z",
+      "updatedAt": "2026-10-04T06:59:13.865Z",
       "autoApproved": true
     },
     "code-generation": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-04T05:39:02.145Z",
+      "updatedAt": "2026-10-04T07:21:12.106Z",
       "autoApproved": true
     },
     "code-review": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-04T05:58:24.847Z",
+      "updatedAt": "2026-10-04T07:32:41.199Z",
       "autoApproved": true
     },
     "refactor": {
-      "status": "complete",
+      "status": "skipped",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-04T05:59:38.341Z",
-      "autoApproved": true
+      "updatedAt": "2026-10-04T07:32:48.331Z"
     },
     "test-plan": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-04T06:00:21.799Z",
+      "updatedAt": "2026-10-04T07:33:04.273Z",
       "autoApproved": true
     },
     "test-generation": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-04T06:08:52.546Z",
+      "updatedAt": "2026-10-04T07:33:16.083Z",
       "autoApproved": true
     },
     "ci-pipeline": {
-      "status": "complete",
+      "status": "skipped",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-04T06:10:49.089Z",
-      "autoApproved": true
+      "updatedAt": "2026-10-04T07:33:23.432Z"
     },
     "deployment": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-04T06:11:37.145Z",
+      "updatedAt": "2026-10-04T07:33:37.932Z",
       "autoApproved": true
     },
     "release-validation": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-04T06:24:22.624Z",
+      "updatedAt": "2026-10-04T07:36:17.280Z",
       "autoApproved": true
     }
   },
-  "startedAt": "2026-10-04T02:04:27.934Z",
-  "updatedAt": "2026-10-04T06:24:22.624Z"
+  "startedAt": "2026-10-04T06:51:06.536Z",
+  "updatedAt": "2026-10-04T07:36:17.280Z"
 }
