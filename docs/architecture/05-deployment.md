@@ -128,7 +128,7 @@ or Kustomize for identity-service. Migrations run as pre-upgrade Jobs.
 | `COURIER_DEDUPE_SECRET` | identity-service (courier de-duplication HMAC) | Any time (at most one duplicate message per in-flight code) |
 | `SMTP_URL` | identity-service mailer (invitations and every Kratos message, ADR-0013) | Provider |
 | `SMS_HTTP_TOKEN` | identity-service SMS adapter (`SMS_PROVIDER=http`) | Provider |
-| OpenBao keys `identity-login-pseudonym`, `identity-login-kek` | identity-service (via its Transit token) | Pseudonym key: never rotated in place (re-key procedure, ADR-0013). Login KEK: `make kek-rotate` + `make keys-rewrap` |
+| OpenBao keys `identity-login-pseudonym`, `identity-login-kek` | identity-service (via its Transit token) | HMAC (lookup) key: never rotated in place; re-key rewrites `login_identifier.lookup_key` only (ADR-0014). Login KEK: `make kek-rotate` + `make keys-rewrap` |
 
 Rules for supplying values to Kratos and Keto:
 
@@ -157,9 +157,11 @@ All configuration is environment-driven (12-factor). Local values live in
 2. DB migrations (Kratos, Keto, identity) run first as Jobs; identity migrations are expand/contract.
 3. Rolling deploy; `/readyz` gates traffic.
 4. Mobile releases are decoupled — the API stays backwards compatible within `v1`.
-   Exception: the pseudonymous-login rollout (ADR-0013) needs the app that
+   Exceptions: the pseudonymous-login rollout (ADR-0013) needs the app that
    resolves identifiers first, enforced as a minimum version before step 4
-   of its runbook (08 §8.12).
+   of its runbook (08 §8.12). The login proxy (ADR-0014) removes
+   `POST /v1/auth/identifiers`, so the app that signs in through
+   `POST /v1/auth/login` must ship with it (forced update).
 5. Scheduled jobs: `identity-service pii purge-unbound-logins` (daily),
    `make kratos-scrub` (courier retention, daily) and `kratos cleanup sql
    --keep-last 24h` (expired flows).

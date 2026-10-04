@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | Credentials, MFA secrets, sessions | Kratos (`kratos` DB) | Nothing — never read |
 | Traits (customer: pseudonymous `login_id` only; admin: email, name) | Kratos | Read via Kratos API (session payload or admin API) |
-| Customer login identifier (email or phone) | identity-service, encrypted (`login_identifier`) | Resolved by `POST /v1/auth/identifiers`; owner via `/v1/me`; admins masked / reveal (ADR-0013) |
+| Customer login identifier (email or phone) | identity-service, encrypted (`login_identifier`) | Found by its HMAC lookup key at `POST /v1/auth/{login,registration,recovery}` (never returned to clients); owner via `/v1/me`; admins masked / reveal (ADR-0013, ADR-0014) |
 | Customer personal info (name, phone, DOB, address, national id) | identity-service, encrypted (`customer_pii`) | Read via `/v1/me/personal-info`; admins masked / reveal ([08](08-pii-protection.md)) |
 | Identity state (active / inactive) | Kratos | Change via Kratos admin API |
 | Roles / permissions | Keto (`keto` DB) | Check / write via Keto API |
@@ -75,8 +75,10 @@ idle-in-transaction timeout 10 s.
 }
 ```
 
-`login_id` is the pseudonym of the customer's email or phone
+`login_id` is an opaque handle for the customer's email or phone. Handles
+are random since ADR-0014; older ones are the HMAC of the address
 ([ADR-0013](../adr/0013-pseudonymous-customer-login-identifiers.md),
+[ADR-0014](../adr/0014-customer-login-through-identity-service.md),
 [08 §8.12](08-pii-protection.md#812-login-identifiers-adr-0013)). During the
 migration window Kratos uses `customer.v2.transition.json`, which accepts
 `login_id` or the legacy `email`, never both.
@@ -180,15 +182,16 @@ Design notes (from the team's PostgreSQL rules):
 only SELECT, INSERT and UPDATE on `customer_pii`. Details are in
 [08-pii-protection](08-pii-protection.md).
 
-### Login identifiers (migration 0006, ADR-0013)
+### Login identifiers (migrations 0006, 0007; ADR-0013, ADR-0014)
 
 | Table | Holds | Notes |
 | --- | --- | --- |
-| `login_identifier` | `pseudonym` (32-byte HMAC, PK), `kind` (`email`\|`phone`), `value_ct` (`vault:vN:…`), `kek_version`, `identity_id` (unique, NULL until bound), `bound_at`, `legacy_verified`, `created_at`, `last_validated_at` | The address behind each Kratos `login_id`. Unbound rows older than 24 h without an identity are purged |
+| `login_identifier` | `pseudonym` (32-byte Kratos handle, PK; random since 0007), `lookup_key` (32-byte HMAC of the address, unique; backfilled `= pseudonym` by 0007), `kind` (`email`\|`phone`), `value_ct` (`vault:vN:…`), `kek_version`, `identity_id` (unique, NULL until bound), `bound_at`, `legacy_verified`, `created_at`, `last_validated_at` | The address behind each Kratos `login_id`. Unbound rows older than 24 h without an identity are purged |
 | `courier_dispatch` | `dedupe_key` (keyed hash of template, recipient, code), `state` (`pending`\|`sent`), timestamps | Kratos courier de-duplication. Rows are deleted after 24 h |
 
-`identity_app` cannot change a row's `pseudonym`, `kind` or `created_at`
-(column grants).
+`identity_app` cannot change a row's `pseudonym`, `lookup_key`, `kind` or
+`created_at` (column grants). The re-key CLI, when built, will need UPDATE on
+`lookup_key`.
 
 ## 4.5 Data lifecycle
 

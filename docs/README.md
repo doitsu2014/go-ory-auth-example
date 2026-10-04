@@ -51,6 +51,7 @@ flowchart LR
 | 7 | [Cross-cutting concerns](architecture/07-cross-cutting.md) | Observability, config, errors, testing |
 | 8 | [PII protection](architecture/08-pii-protection.md) | Envelope encryption, blind index, masking/reveal, crypto-shredding, key lifecycle |
 | 9 | [Machine-to-machine access](architecture/09-machine-access.md) | Ory Hydra client_credentials, JWT validation, `/m2m` plane, service clients |
+| 10 | [Pseudonymous customer login](architecture/10-pseudonymous-login.md) | End-to-end diagrams of sign-in through identity-service (login, registration, /me, recovery, admin), API calls per hop, pros/cons, model history (ADR-0013 → ADR-0014), future directions |
 | 10 | [Design principles](principles/01-design-principles.md) | The rules every change must respect |
 | 11 | [Go backend guidelines](principles/02-backend-go.md) | Service layout, libraries, coding rules |
 | 12 | [Admin web guidelines](principles/03-admin-web-react.md) | React SPA structure and auth handling |

@@ -18,7 +18,8 @@ supersedes it.
 | [0010](0010-contract-first-api.md) | Contract-first OpenAPI 3.0.3 with RFC 9457 errors | Proposed |
 | [0011](0011-envelope-encryption-for-pii.md) | Envelope encryption with OpenBao Transit for customer PII | Proposed |
 | [0012](0012-hydra-for-machine-to-machine.md) | Ory Hydra for machine-to-machine access | Proposed |
-| [0013](0013-pseudonymous-customer-login-identifiers.md) | Pseudonymous customer login identifiers in Kratos | Proposed |
+| [0013](0013-pseudonymous-customer-login-identifiers.md) | Pseudonymous customer login identifiers in Kratos | Accepted; partly superseded by 0014 |
+| [0014](0014-customer-login-through-identity-service.md) | Customer login through identity-service with opaque Kratos handles | Accepted |
 
 Status flow: Proposed → Accepted (owner review) → Superseded / Deprecated.
 

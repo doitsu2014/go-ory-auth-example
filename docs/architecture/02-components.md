@@ -70,9 +70,9 @@ around identity**, not a replacement for Kratos.
 | | |
 | --- | --- |
 | **Owns** | `identity` database: customer/admin **profiles** (app-specific data keyed by Kratos identity id), **audit log** of admin actions |
-| **Exposes** | `:8080` public REST `/v1/*` (customers, bearer only; `POST /v1/auth/identifiers` is public and rate limited per IP) and `/admin/v1/*` (admins, cookie only) on `api.<domain>`; `:8081` **webhook-only** `/internal/hooks/kratos/*` (reachable only by Kratos); `:9090` ops `/healthz`, `/readyz`, `/metrics` (probes + Prometheus only) |
-| **Depends on** | Kratos public (session check), Kratos admin (identity management, recovery codes, session revoke), Keto read/write, PostgreSQL db `identity`, OpenBao Transit, SMTP (invitations and every Kratos message), SMS provider (phone logins) |
-| **Never** | Receive or store passwords; proxy Kratos self-service flows; read Kratos/Keto tables; trust identity data sent by clients |
+| **Exposes** | `:8080` public REST `/v1/*` (customers, bearer only; `POST /v1/auth/{login,registration,recovery,recovery/code}` are public and rate limited, ADR-0014) and `/admin/v1/*` (admins, cookie only) on `api.<domain>`; `:8081` **webhook-only** `/internal/hooks/kratos/*` (reachable only by Kratos); `:9090` ops `/healthz`, `/readyz`, `/metrics` (probes + Prometheus only) |
+| **Depends on** | Kratos public (session check; customer login, registration and recovery API flows including the recovery code step, ADR-0014), Kratos admin (identity management, recovery codes, session revoke), Keto read/write, PostgreSQL db `identity`, OpenBao Transit, SMTP (invitations and every Kratos message), SMS provider (phone logins) |
+| **Never** | Store or log passwords (customer passwords pass through memory only, for `POST /v1/auth/{login,registration}`, ADR-0014); proxy admin flows or the customer verification and settings flows; return a Kratos recovery flow id in clear (it is sealed as `recovery_id`); read Kratos/Keto tables; trust identity data sent by clients |
 
 Responsibilities:
 
@@ -137,8 +137,8 @@ One cluster (v16+), three databases, three login roles. See
 | Session validation for our API | provides | | **R** | | |
 | Roles & permissions | | **R** (data) | **R** (enforce) | hides UI | |
 | Profile data | | | **R** | | |
-| Customer login pseudonym (trait `login_id`) | **R** | | resolves, binds, migrates | | submits to Kratos flows |
-| Customer email / phone (login vault, encrypted) | | | **R** | masked / reveal | resolves before each flow |
+| Customer login handle (trait `login_id`) | **R** | | creates, looks up, binds, migrates | | uses its own (whoami) for verification / refresh |
+| Customer email / phone (login vault, encrypted) | | | **R** | masked / reveal | sends to `POST /v1/auth/*` |
 | Audit of admin actions | | | **R** | | |
 
 R = responsible / source of truth.

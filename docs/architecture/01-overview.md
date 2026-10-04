@@ -13,8 +13,10 @@
 
 Non-goals (v1): third-party OAuth2 clients, multi-tenancy, billing,
 passwordless (code-only) login, production cloud provisioning. Customers can
-sign in with an email **or a phone number**. Kratos only ever stores a
-pseudonym of it ([ADR-0013](../adr/0013-pseudonymous-customer-login-identifiers.md)).
+sign in with an email **or a phone number**. Kratos only ever stores an
+opaque handle for it ([ADR-0013](../adr/0013-pseudonymous-customer-login-identifiers.md)),
+and identity-service signs customers in on their behalf
+([ADR-0014](../adr/0014-customer-login-through-identity-service.md)).
 SMS goes through a provider port (a Mailpit sink locally).
 
 ## 1.2 System context (C4 level 1)
@@ -102,7 +104,8 @@ private network (see [05-deployment](05-deployment.md)).
 | [0010](../adr/0010-contract-first-api.md) | Contract-first OpenAPI 3.0.3, RFC 9457 errors |
 | [0011](../adr/0011-envelope-encryption-for-pii.md) | Envelope encryption with OpenBao Transit for customer PII |
 | [0012](../adr/0012-hydra-for-machine-to-machine.md) | Ory Hydra for machine-to-machine access |
-| [0013](../adr/0013-pseudonymous-customer-login-identifiers.md) | Kratos stores only pseudonyms of customer emails/phones; identity-service resolves and delivers |
+| [0013](../adr/0013-pseudonymous-customer-login-identifiers.md) | Kratos stores only pseudonyms of customer emails/phones; identity-service keeps the encrypted address and delivers codes ([diagrams](10-pseudonymous-login.md)) |
+| [0014](../adr/0014-customer-login-through-identity-service.md) | Customer sign-in, registration and recovery start go through identity-service; random Kratos handles, HMAC lookup key in the vault (no resolve oracle) |
 
 ## 1.5 Options considered for the overall shape
 
@@ -111,7 +114,7 @@ private network (see [05-deployment](05-deployment.md)).
 | **A. Kratos sessions + Keto + Go API** | Clients talk to Kratos for self-service flows and to the Go API with the Kratos session | **Chosen** — simplest correct model for first-party apps; matches Ory guidance |
 | B. Kratos + Hydra (OAuth2/OIDC everywhere) | Both clients do Authorization Code + PKCE; API validates JWT access tokens | Rejected for v1 — forces the system browser on mobile, adds consent/token lifecycle; revisit when third-party clients appear |
 | C. Kratos + Oathkeeper gateway | Oathkeeper authenticates and mints JWTs for upstreams | Deferred — valuable with several backend services; one service doesn't justify another hop |
-| D. Go service proxies all auth (BFF for both) | Clients only talk to Go; Go calls Kratos | Rejected — reimplements Kratos flows, CSRF and error handling; passwords transit our code |
+| D. Go service proxies all auth (BFF for both) | Clients only talk to Go; Go calls Kratos | Rejected — reimplements Kratos flows, CSRF and error handling; passwords transit our code. ADR-0014 later adopts a **narrow** form for customers only: identity-service drives Kratos API flows for sign-in, registration and recovery start (no CSRF to relay); everything else stays direct |
 
 ## 1.6 Quality attributes
 

@@ -10,7 +10,7 @@ Base URLs: `https://api.example.com` (prod), `http://localhost:8080` (local).
 
 | Interface | Kind | Consumer | Exposure |
 | --- | --- | --- | --- |
-| Login identifier resolution `POST /v1/auth/identifiers` | REST | Mobile app | Public, no credential, per-IP limits (ADR-0013) |
+| Customer sign-in, registration, recovery `POST /v1/auth/{login,registration,recovery,recovery/code}` | REST | Mobile app | Public, no credential, rate limited (ADR-0014) |
 | Customer API `/v1/*` | REST | Mobile app | Public |
 | Admin API `/admin/v1/*` | REST | Admin web | Public (cookie, AAL2) |
 | Kratos webhooks `/internal/hooks/kratos/*` | REST | Kratos | Private `:8081` |
@@ -23,7 +23,10 @@ Base URLs: `https://api.example.com` (prod), `http://localhost:8080` (local).
 
 | Method & path | Auth | Permission | Req |
 | --- | --- | --- | --- |
-| `POST /v1/auth/identifiers` | none (per-IP limits) | — | PLI-FR-01, 02 |
+| `POST /v1/auth/login` | none (rate limited) | — | PLX-FR-01, 06, 07 |
+| `POST /v1/auth/registration` | none (rate limited) | — | PLX-FR-02, 04, 06 |
+| `POST /v1/auth/recovery` | none (rate limited) | — | PLX-FR-03 |
+| `POST /v1/auth/recovery/code` | none (rate limited) | — | PLX-FR-03 |
 | `GET /v1/me` | customer | self | FR-09, FR-10, PLI-FR-07 |
 | `PATCH /v1/me` | customer (verified email) | self | FR-10 |
 | `GET /admin/v1/me` | admin (AAL1 allowed) | — | FR-05, FR-06 |
@@ -59,32 +62,99 @@ Every `/admin/v1/customers/{id}/*` endpoint returns `404` when the target isn't 
 
 ---
 
-## `POST /v1/auth/identifiers`
+## Customer auth: `POST /v1/auth/login`, `/registration`, `/recovery`, `/recovery/code`
 
-The app calls this before every Kratos flow that takes an identifier, then
-sends Kratos the returned pseudonym instead of the email or phone number.
-Passwords and codes never come here.
+ADR-0014. The app sends the email or phone number as typed. identity-service
+finds the account's opaque Kratos handle through the keyed lookup hash and
+runs the Kratos native (API) flow server side. A handle is never returned to
+an unauthenticated caller, and neither is a Kratos recovery flow id.
+Verification, the settings flow (including the new password after recovery)
+and logout stay direct to Kratos.
 
 ```json
-POST /v1/auth/identifiers
-{ "type": "phone", "value": "0901 234 567", "purpose": "sign_in" }
+POST /v1/auth/login            (same body for /v1/auth/registration)
+{ "login": { "type": "phone", "value": "0901 234 567" }, "password": "…" }
 ```
 
 ```json
 200 OK
-Cache-Control: no-store
-{ "identifier": "l4cwc5fmnvxqxufy7wuuh2mfathke4fvwo3curj5ydaoo3iijsgq@login.invalid" }
+{
+  "session_token": "ory_st_…",
+  "session": { "id": "…", "identity": { "id": "…", "traits": { "login_id": "<handle>@login.invalid" }, … } },
+  "verification_flow_id": "…"
+}
 ```
 
-- `type`: `email` or `phone`.
-- `purpose`: `registration`, `sign_in`, `recovery` or `verification`. Only
-  `registration` stores the address, encrypted.
-- Limits per client IP (IPv6 per /64): 20/min and 200/day, registration
-  5/min and 30/day → `429 rate_limited`.
-- Errors: `422 validation_failed` with `value`: `invalid_format` |
-  `too_long` | `invalid_characters` | `unsupported_country`, or `type`:
-  `unsupported` (no SMS channel). An unknown property gives
-  `unknown_field`. The value is never echoed.
+`session` is the Kratos session object, returned to its owner.
+`verification_flow_id` appears only on a registration where Kratos started a
+verification flow.
+
+```json
+POST /v1/auth/recovery
+{ "login": { "type": "email", "value": "an@example.com" } }
+
+200 OK
+{ "recovery_id": "vault:v7:k6u66s4i4zQY…" }
+```
+
+`recovery_id` is the Kratos recovery flow id sealed with the login KEK in
+OpenBao (Transit AEAD, associated data `identity-service/recovery-flow/v1`).
+It is opaque and differs on every call. The answer has the same shape whether
+or not the account exists, because a random decoy handle runs the same flow.
+A code is delivered only to existing accounts.
+
+The flow id is never returned in clear: Kratos's public
+`GET /self-service/recovery/flows?id=` shows the handle in its `email` node.
+
+```json
+POST /v1/auth/recovery/code
+{ "recovery_id": "vault:v7:k6u66s4i4zQY…", "code": "123456" }
+
+200 OK
+{ "session_token": "ory_st_…", "settings_flow_id": "…" }
+```
+
+The token is a privileged Kratos session. The app sets the new password with
+`POST /self-service/settings?flow=<settings_flow_id>` at Kratos
+(`X-Session-Token`). Errors on this endpoint:
+
+- wrong code: `400 auth_flow_rejected` `form`/`4060006`;
+- expired flow: `410 auth_flow_expired` (start again with
+  `POST /v1/auth/recovery`);
+- forged or tampered `recovery_id`: `422 validation_failed` on field
+  `recovery_id` (`invalid`); `code` must be 6 digits.
+
+- **Rejections:** `400 auth_flow_rejected`, with
+  `errors[{field, code}]`:
+  - `field` is `login`, `password` or `form`;
+  - `code` is the Kratos message id, e.g.
+    `{"field":"form","code":"4000006"}` (wrong password or unknown account,
+    identical for both), `password`/`4000032` (too short), `form`/`4000007`
+    (already registered).
+
+  Kratos text, context and the flow itself are never forwarded.
+- **Validation:** `422 validation_failed` on:
+  - `login.type`: `invalid` | `unsupported` (no SMS channel);
+  - `login.value`: `invalid_format` | `too_long` | `invalid_characters` |
+    `unsupported_country`;
+  - `password`: `required` | `too_long` (> 1024).
+
+  An unknown property gives `unknown_field`. The value is never echoed.
+- **Limits** (`429 rate_limited`, `Retry-After`):
+
+  | Applies to | Default | Setting |
+  | --- | --- | --- |
+  | login, recovery and recovery code, per client IP (IPv6 /64) | 20/min, 200/day | `LOGIN_SIGNIN_RATE` |
+  | registration, per client IP | 5/min, 30/day | `LOGIN_REGISTER_RATE` |
+  | per /24 (/48) network | 300/min, 5000/day | `LOGIN_NET_RATE` |
+  | every sign-in attempt per account, recorded before Kratos is called | 10/15 min, 50/day | `LOGIN_ACCOUNT_RATE` |
+  The account limit means anyone can block sign-in to an address for up to
+  15 minutes. This is accepted (ADR-0014); a combined account+IP key or a
+  CAPTCHA is a follow-up.
+- Registration reveals that an address is taken (`4000007`), as native Kratos
+  does. Login and recovery do not.
+- `503 dependency_unavailable` when OpenBao, the database or Kratos is
+  down. The password is never logged or stored.
 
 ## `GET /v1/me`
 
@@ -272,3 +342,10 @@ Additive changes only within v1; breaking changes ship `/v2`; deprecations use
   These are deliberate exceptions to the additive-only rule. They are
   justified by "no PII in URLs" and by the fact that only first-party clients
   consume `/v1` and `/admin/v1`.
+- **2026-10-04 (ADR-0014, the app updated in the same release).**
+  - Removed: `POST /v1/auth/identifiers` (now 404).
+  - New: `POST /v1/auth/login`, `POST /v1/auth/registration`,
+    `POST /v1/auth/recovery` (→ `recovery_id`),
+    `POST /v1/auth/recovery/code`, and the problem codes
+    `auth_flow_rejected` (400) and `auth_flow_expired` (410).
+  - Old app builds must update.

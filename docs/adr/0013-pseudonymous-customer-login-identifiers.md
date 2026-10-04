@@ -1,7 +1,16 @@
 # 0013. Pseudonymous customer login identifiers in Kratos
 
-- Status: Proposed
+- Status: Accepted; partly superseded by
+  [ADR-0014](0014-customer-login-through-identity-service.md) (resolve
+  endpoint, deterministic handle, device cache)
 - Date: 2026-10-04
+
+> **Note (ADR-0014).** The public resolve endpoint `POST /v1/auth/identifiers`
+> is gone. Customers sign in, register and start recovery through
+> identity-service (`POST /v1/auth/{login,registration,recovery}`). New Kratos
+> handles are random, and the vault finds rows by a separate `lookup_key` =
+> HMAC(address). The vault, AEAD, courier, pre-registration webhook and
+> migration below still apply.
 
 ## Context
 
@@ -45,6 +54,9 @@ Passwords must never pass through identity-service.
 - **Existing customers** are migrated by `identity-service pii
   migrate-kratos-logins`, which is crash-safe and idempotent. During the
   migration window Kratos uses a transition schema (`email` xor `login_id`).
+
+Diagrams, pros/cons and future directions:
+[10-pseudonymous-login](../architecture/10-pseudonymous-login.md).
 
 ## Alternatives considered
 

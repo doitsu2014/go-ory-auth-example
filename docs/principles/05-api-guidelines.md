@@ -40,6 +40,11 @@ Standard codes: `unauthenticated` (401), `forbidden`, `not_admin`,
 `aal2_required`, `mfa_enrollment_required`, `email_not_verified` (403),
 `not_found` (404), `conflict` (409), `validation_failed` (422),
 `rate_limited` (429), `dependency_unavailable` (503), `internal` (500).
+Customer auth (`/v1/auth/*`, ADR-0014) adds:
+
+- `auth_flow_rejected` (400): Kratos rejected the flow; `errors[].code` is the
+  Kratos message id, and `field` is `login`, `password` or `form`;
+- `auth_flow_expired` (410): the recovery flow expired.
 
 ## 4. Pagination, filtering, sorting
 
