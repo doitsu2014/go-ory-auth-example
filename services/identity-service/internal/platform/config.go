@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/caarlos0/env/v11"
+
+	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/app"
 )
 
 // Config is the 12-factor environment configuration.
@@ -82,6 +85,128 @@ type Config struct {
 	// M2MClientTagKey is a base64 key (≥ 32 bytes) for the HMAC integrity
 	// tag on managed Hydra clients (security S4). Secret: never log.
 	M2MClientTagKey string `env:"M2M_CLIENT_TAG_KEY"`
+
+	// Pseudonymous login identifiers (ADR-0013).
+	PIIOpenBaoLoginHMACKeyName string `env:"PII_OPENBAO_LOGIN_HMAC_KEY_NAME" envDefault:"identity-login-pseudonym"`
+	PIIOpenBaoLoginKEKName     string `env:"PII_OPENBAO_LOGIN_KEK_NAME" envDefault:"identity-login-kek"`
+	// KratosCourierAPIKey authenticates the Kratos http courier; it must
+	// differ from KRATOS_WEBHOOK_API_KEY (A4). Secret: never log.
+	KratosCourierAPIKey string `env:"KRATOS_COURIER_API_KEY"`
+	// CourierDedupeSecret is a base64 key (>= 32 bytes) for the courier
+	// de-duplication hash (A9). Secret: never log.
+	CourierDedupeSecret string `env:"COURIER_DEDUPE_SECRET"`
+	// LoginMigrationPhase is transition (legacy plaintext customers exist)
+	// or complete (A2, DD-15).
+	LoginMigrationPhase        string   `env:"LOGIN_MIGRATION_PHASE" envDefault:"transition"`
+	LoginPhoneDefaultCountry   string   `env:"LOGIN_PHONE_DEFAULT_COUNTRY" envDefault:"84"`
+	LoginPhoneAllowedCountries []string `env:"LOGIN_PHONE_ALLOWED_COUNTRIES" envSeparator:"," envDefault:"84"`
+	// LoginSignInRate limits POST /v1/auth/login and /v1/auth/recovery per
+	// client IP (IPv6 /64); LoginRegisterRate POST /v1/auth/registration.
+	LoginSignInRate   string `env:"LOGIN_SIGNIN_RATE" envDefault:"20/1m,200/24h"`
+	LoginRegisterRate string `env:"LOGIN_REGISTER_RATE" envDefault:"5/1m,30/24h"`
+	// LoginNetRate is the aggregate limit per /24 (IPv4) or /48 (IPv6)
+	// network, all /v1/auth routes together (SEC-C03).
+	LoginNetRate string `env:"LOGIN_NET_RATE" envDefault:"300/1m,5000/24h"`
+	// LoginAccountRate limits failed sign-ins per account (ADR-0014).
+	LoginAccountRate      string `env:"LOGIN_ACCOUNT_RATE" envDefault:"10/15m,50/24h"`
+	LoginInsertGlobalRate string `env:"LOGIN_INSERT_GLOBAL_RATE" envDefault:"120/1m"`
+	CourierRecipientRate  string `env:"COURIER_RECIPIENT_RATE" envDefault:"5/1h,20/24h"`
+	// SMSProvider is sink (local/test: Mailpit), http or disabled.
+	SMSProvider    string `env:"SMS_PROVIDER" envDefault:"disabled"`
+	SMSDailyBudget int    `env:"SMS_DAILY_BUDGET" envDefault:"1000"`
+	// SMSCountryDailyBudget caps SMS per calling code per 24 h (A3).
+	SMSCountryDailyBudget int    `env:"SMS_COUNTRY_DAILY_BUDGET" envDefault:"1000"`
+	SMSHTTPURL            string `env:"SMS_HTTP_URL"`
+	// SMSHTTPToken is the provider bearer token. Secret: never log.
+	SMSHTTPToken string `env:"SMS_HTTP_TOKEN"`
+}
+
+// SMS providers.
+const (
+	SMSProviderSink     = "sink"
+	SMSProviderHTTP     = "http"
+	SMSProviderDisabled = "disabled"
+)
+
+// LoginRates are the parsed login and courier rate rules.
+type LoginRates struct {
+	SignIn, Register, Net, Account, InsertGlobal, CourierRecipient []app.RateRule
+}
+
+// ParseLoginRates parses the LOGIN_*_RATE / COURIER_RECIPIENT_RATE settings.
+func (c Config) ParseLoginRates() (LoginRates, error) {
+	var r LoginRates
+	var errs []error
+	for _, x := range []struct {
+		name, val string
+		dst       *[]app.RateRule
+	}{
+		{"LOGIN_SIGNIN_RATE", c.LoginSignInRate, &r.SignIn},
+		{"LOGIN_REGISTER_RATE", c.LoginRegisterRate, &r.Register},
+		{"LOGIN_NET_RATE", c.LoginNetRate, &r.Net},
+		{"LOGIN_ACCOUNT_RATE", c.LoginAccountRate, &r.Account},
+		{"LOGIN_INSERT_GLOBAL_RATE", c.LoginInsertGlobalRate, &r.InsertGlobal},
+		{"COURIER_RECIPIENT_RATE", c.CourierRecipientRate, &r.CourierRecipient},
+	} {
+		rules, err := app.ParseRateRules(x.val)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", x.name, err))
+		}
+		*x.dst = rules
+	}
+	return r, errors.Join(errs...)
+}
+
+// DedupeKey decodes COURIER_DEDUPE_SECRET (base64, >= 32 bytes).
+func (c Config) DedupeKey() ([]byte, error) {
+	for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding} {
+		if b, err := enc.DecodeString(c.CourierDedupeSecret); err == nil && len(b) >= 32 {
+			return b, nil
+		}
+	}
+	return nil, errors.New("COURIER_DEDUPE_SECRET must be a base64 key of at least 32 bytes")
+}
+
+// ValidateLogin checks the login identifier settings (serve).
+func (c Config) ValidateLogin() error {
+	var errs []error
+	if len(c.KratosCourierAPIKey) < 16 {
+		errs = append(errs, errors.New("KRATOS_COURIER_API_KEY is required (>= 16 chars)"))
+	} else if c.KratosCourierAPIKey == c.KratosWebhookAPIKey {
+		errs = append(errs, errors.New("KRATOS_COURIER_API_KEY must differ from KRATOS_WEBHOOK_API_KEY"))
+	}
+	if _, err := c.DedupeKey(); err != nil {
+		errs = append(errs, err)
+	}
+	if _, ok := app.ParseMigrationPhase(c.LoginMigrationPhase); !ok {
+		errs = append(errs, errors.New("LOGIN_MIGRATION_PHASE must be transition or complete"))
+	}
+	for _, cc := range append([]string{c.LoginPhoneDefaultCountry}, c.LoginPhoneAllowedCountries...) {
+		if len(cc) == 0 || len(cc) > 3 || strings.Trim(cc, "0123456789") != "" || cc[0] == '0' {
+			errs = append(errs, errors.New("LOGIN_PHONE_* must be calling codes (1-3 digits)"))
+			break
+		}
+	}
+	if _, err := c.ParseLoginRates(); err != nil {
+		errs = append(errs, err)
+	}
+	if c.SMSDailyBudget <= 0 || c.SMSCountryDailyBudget <= 0 {
+		errs = append(errs, errors.New("SMS_DAILY_BUDGET and SMS_COUNTRY_DAILY_BUDGET must be > 0"))
+	}
+	switch c.SMSProvider {
+	case SMSProviderDisabled:
+	case SMSProviderSink:
+		if !c.DevEnv() {
+			errs = append(errs, errors.New("SMS_PROVIDER=sink is only allowed when APP_ENV is local or test"))
+		}
+	case SMSProviderHTTP:
+		if c.SMSHTTPURL == "" || c.SMSHTTPToken == "" {
+			errs = append(errs, errors.New("SMS_HTTP_URL and SMS_HTTP_TOKEN are required for SMS_PROVIDER=http"))
+		}
+	default:
+		errs = append(errs, errors.New("SMS_PROVIDER must be sink, http or disabled"))
+	}
+	return errors.Join(errs...)
 }
 
 // ClientTagKey decodes M2M_CLIENT_TAG_KEY (standard or URL-safe base64,
@@ -138,8 +263,10 @@ func (c Config) ValidatePII() error {
 		if c.PIIOpenBaoTokenFile == "" {
 			errs = append(errs, errors.New("PII_OPENBAO_TOKEN_FILE is required for PII_KMS_PROVIDER=openbao"))
 		}
-		if c.PIIOpenBaoKEKName == "" || c.PIIOpenBaoBidxKeyName == "" || c.PIIOpenBaoKEKName == c.PIIOpenBaoBidxKeyName {
-			errs = append(errs, errors.New("PII_OPENBAO_KEK_NAME and PII_OPENBAO_BIDX_KEY_NAME must be set and distinct"))
+		names := map[string]bool{c.PIIOpenBaoKEKName: true, c.PIIOpenBaoBidxKeyName: true,
+			c.PIIOpenBaoLoginHMACKeyName: true, c.PIIOpenBaoLoginKEKName: true}
+		if names[""] || len(names) != 4 {
+			errs = append(errs, errors.New("PII_OPENBAO_KEK_NAME, PII_OPENBAO_BIDX_KEY_NAME, PII_OPENBAO_LOGIN_HMAC_KEY_NAME and PII_OPENBAO_LOGIN_KEK_NAME must be set and distinct"))
 		}
 		if c.PIIOpenBaoTimeout <= 0 {
 			errs = append(errs, errors.New("PII_OPENBAO_TIMEOUT must be > 0"))
@@ -260,6 +387,9 @@ func (c Config) ValidateServe() error {
 		errs = append(errs, err)
 	}
 	if err := c.ValidateM2M(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := c.ValidateLogin(); err != nil {
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)

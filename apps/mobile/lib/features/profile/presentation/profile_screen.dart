@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_ory_auth_mobile/app/providers.dart';
 import 'package:go_ory_auth_mobile/app/routes.dart';
+import 'package:go_ory_auth_mobile/core/identity/login_input.dart';
 import 'package:go_ory_auth_mobile/core/kratos/kratos_messages.dart';
 import 'package:go_ory_auth_mobile/core/network/app_failure.dart';
 import 'package:go_ory_auth_mobile/features/profile/domain/me.dart';
@@ -74,8 +75,16 @@ class _ProfileBody extends ConsumerWidget {
       padding: const EdgeInsets.all(24),
       children: [
         ListTile(
-          title: Text(l10n.email),
-          subtitle: Text(me.email, key: const Key('profile.email')),
+          leading: Icon(
+            me.login.type == LoginType.email
+                ? Icons.email_outlined
+                : Icons.phone_iphone,
+          ),
+          title: Text(
+            me.login.type == LoginType.email ? l10n.email : l10n.phoneNumber,
+            key: const Key('profile.loginType'),
+          ),
+          subtitle: Text(me.login.value, key: const Key('profile.login')),
           trailing: Chip(
             key: const Key('profile.verifiedBadge'),
             avatar: Icon(

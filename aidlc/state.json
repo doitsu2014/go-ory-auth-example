@@ -2,89 +2,127 @@
   "workflowVersion": "1.0.0",
   "engineVersion": "0.1.0",
   "activeIntent": {
-    "id": "261003-move-customer-full",
-    "label": "move-customer-full",
-    "description": "Move customer full name out of Kratos traits into encrypted PII (customer_pii.full_name, mask/reveal/crypto-shred), migrate existing names out of Kratos, keep display_name as optional nickname and fix seeds",
+    "id": "261004-refactor-customer-login",
+    "label": "refactor-customer-login",
+    "description": "Refactor customer login to a backend proxy with opaque Kratos identifiers (partially supersedes ADR-0013): mobile sends email/phone + password to identity-service; identity-service HMACs via OpenBao, looks up the Kratos identifier in the PII vault (existing users keep their current login_id string, new users get a random opaque id), drives Kratos native API flows server-to-server (login, registration, verification, recovery via admin recovery code, settings password change, logout), returns the session token. Remove the public resolve endpoint /v1/auth/identifiers (oracle C1) and the extra client round trip (C3). Update mobile app, docs (ADR-0014, chapter 10, roadmap) and tests.",
     "scope": "feature",
     "space": "default",
-    "createdAt": "2026-10-03T15:24:16.127Z"
+    "createdAt": "2026-10-04T06:51:06.536Z"
   },
-  "currentStage": "test-plan",
-  "parked": true,
+  "currentStage": null,
+  "parked": false,
   "stages": {
     "intent-capture": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T15:26:02.608Z"
+      "updatedAt": "2026-10-04T06:56:20.341Z",
+      "autoApproved": true
     },
     "requirements-analysis": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T15:27:01.225Z"
+      "updatedAt": "2026-10-04T06:56:42.926Z",
+      "autoApproved": true
     },
     "feasibility-assessment": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T15:27:01.264Z"
+      "updatedAt": "2026-10-04T06:57:27.514Z",
+      "autoApproved": true
     },
     "architecture-design": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T15:27:56.424Z"
+      "updatedAt": "2026-10-04T06:57:51.756Z",
+      "autoApproved": true
     },
     "api-contract": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T15:27:56.461Z"
+      "updatedAt": "2026-10-04T06:58:31.250Z",
+      "autoApproved": true
     },
     "design-patterns": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T15:27:56.500Z"
+      "updatedAt": "2026-10-04T06:58:42.600Z",
+      "autoApproved": true
     },
     "technical-spec": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T15:27:56.538Z"
+      "updatedAt": "2026-10-04T06:58:59.201Z",
+      "autoApproved": true
     },
     "task-planning": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T15:28:34.381Z"
+      "updatedAt": "2026-10-04T06:59:13.865Z",
+      "autoApproved": true
     },
     "code-generation": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T15:49:48.730Z"
+      "updatedAt": "2026-10-04T07:21:12.106Z",
+      "autoApproved": true
     },
     "code-review": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T16:11:51.361Z"
+      "updatedAt": "2026-10-04T07:32:41.199Z",
+      "autoApproved": true
     },
     "refactor": {
+      "status": "skipped",
+      "attempt": 1,
+      "feedback": [],
+      "updatedAt": "2026-10-04T07:32:48.331Z"
+    },
+    "test-plan": {
       "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T16:12:03.646Z"
+      "updatedAt": "2026-10-04T07:33:04.273Z",
+      "autoApproved": true
     },
-    "test-plan": {
-      "status": "active",
+    "test-generation": {
+      "status": "complete",
       "attempt": 1,
       "feedback": [],
-      "updatedAt": "2026-10-03T16:12:03.646Z"
+      "updatedAt": "2026-10-04T07:33:16.083Z",
+      "autoApproved": true
+    },
+    "ci-pipeline": {
+      "status": "skipped",
+      "attempt": 1,
+      "feedback": [],
+      "updatedAt": "2026-10-04T07:33:23.432Z"
+    },
+    "deployment": {
+      "status": "complete",
+      "attempt": 1,
+      "feedback": [],
+      "updatedAt": "2026-10-04T07:33:37.932Z",
+      "autoApproved": true
+    },
+    "release-validation": {
+      "status": "complete",
+      "attempt": 1,
+      "feedback": [],
+      "updatedAt": "2026-10-04T07:36:17.280Z",
+      "autoApproved": true
     }
   },
-  "startedAt": "2026-10-03T15:24:16.128Z",
-  "updatedAt": "2026-10-03T16:12:08.381Z"
+  "startedAt": "2026-10-04T06:51:06.536Z",
+  "updatedAt": "2026-10-04T07:36:17.280Z"
 }

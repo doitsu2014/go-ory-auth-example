@@ -48,7 +48,7 @@ func (f *fixture) customerID(t *testing.T) uuid.UUID {
 	if err := json.Unmarshal(rec.Body.Bytes(), &me); err != nil || me.ID == uuid.Nil {
 		t.Fatalf("me: %s", rec.Body.String())
 	}
-	f.ids.Add(identity.Identity{ID: me.ID, SchemaID: "customer", Email: "cust@example.com", CreatedAt: now})
+	f.ids.Add(identity.Identity{ID: me.ID, SchemaID: "customer", Email: "cust@example.com", LoginID: "cust@example.com", CreatedAt: now})
 	return me.ID
 }
 

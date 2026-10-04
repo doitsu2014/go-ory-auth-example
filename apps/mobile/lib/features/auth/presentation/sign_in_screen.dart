@@ -1,17 +1,20 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_ory_auth_mobile/app/providers.dart';
 import 'package:go_ory_auth_mobile/app/routes.dart';
+import 'package:go_ory_auth_mobile/core/identity/customer_auth_client.dart';
+import 'package:go_ory_auth_mobile/core/identity/login_input.dart';
 import 'package:go_ory_auth_mobile/core/kratos/kratos_models.dart';
 import 'package:go_ory_auth_mobile/features/auth/presentation/auth_controller.dart';
 import 'package:go_ory_auth_mobile/features/auth/presentation/widgets/flow_form.dart';
+import 'package:go_ory_auth_mobile/features/auth/presentation/widgets/login_identifier_field.dart';
 import 'package:go_ory_auth_mobile/l10n/gen/app_localizations.dart';
 import 'package:go_router/go_router.dart';
 
-/// Native login flow: `createNativeLoginFlow` → `{method: password,
-/// identifier, password}`.
+/// Sign-in with email / phone number and password: one call to
+/// identity-service, which runs the Kratos native login flow with the
+/// account's opaque handle (ADR-0014, PLX-FR-01). Rejections come back as
+/// Kratos message ids on the `login`, `password` and `form` nodes.
 class SignInScreen extends ConsumerStatefulWidget {
   const SignInScreen({super.key});
 
@@ -21,37 +24,40 @@ class SignInScreen extends ConsumerStatefulWidget {
 
 class _SignInScreenState extends ConsumerState<SignInScreen>
     with FlowFormMixin {
-  static const _bound = {'identifier', 'password', 'csrf_token', 'method'};
-  final _identifier = TextEditingController();
+  static const Set<String> _bound = {
+    AuthFlowFields.login,
+    AuthFlowFields.password,
+  };
+  final _login = TextEditingController();
   final _password = TextEditingController();
+  LoginType _loginType = LoginType.email;
 
-  @override
-  Future<KratosFlow> Function() get createFlow =>
-      ref.read(authRepositoryProvider).startLogin;
+  /// Client-side format check result (UX only).
+  String? _loginCode;
 
+  /// No Kratos flow on the device: identity-service creates it.
   @override
-  void initState() {
-    super.initState();
-    unawaited(loadFlow());
-  }
+  Future<KratosFlow> Function()? get createFlow => null;
 
   @override
   void dispose() {
-    _identifier.dispose();
+    _login.dispose();
     _password.dispose();
     super.dispose();
   }
 
-  Future<void> _submit() => runSubmit((flow) async {
-    final session = await ref
-        .read(authRepositoryProvider)
-        .login(
-          flowId: flow!.id,
-          identifier: _identifier.text.trim(),
-          password: _password.text,
-        );
-    ref.read(authControllerProvider.notifier).signedIn(session);
-  });
+  Future<void> _submit() async {
+    final login = LoginInput(type: _loginType, value: _login.text);
+    final code = login.validate();
+    setState(() => _loginCode = code);
+    if (code != null) return;
+    await runSubmit((_) async {
+      final session = await ref
+          .read(authRepositoryProvider)
+          .login(login: login, password: _password.text);
+      ref.read(authControllerProvider.notifier).signedIn(session);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -66,17 +72,27 @@ class _SignInScreenState extends ConsumerState<SignInScreen>
             failure: startup,
             onRetry: () => ref.read(authControllerProvider.notifier).restore(),
           ),
-        FailureBanner(failure: failure, onRetry: loadFlow),
+        FailureBanner(failure: failure, onRetry: _submit),
         FlowMessages(messages: globalMessages(_bound)),
-        TextField(
-          key: const Key('signIn.identifier'),
-          controller: _identifier,
-          keyboardType: TextInputType.emailAddress,
-          autofillHints: const [AutofillHints.email],
+        LoginIdentifierField(
+          keyPrefix: 'signIn',
+          controller: _login,
+          type: _loginType,
           textInputAction: TextInputAction.next,
-          decoration: InputDecoration(
-            labelText: l10n.email,
-            errorText: fieldError(context, 'identifier'),
+          onTypeChanged: (t) => setState(() {
+            _loginType = t;
+            _loginCode = null;
+          }),
+          onChanged: (_) {
+            // The format error described the previous value.
+            if (_loginCode != null) setState(() => _loginCode = null);
+          },
+          errorText: loginErrorText(
+            l10n,
+            _loginType,
+            localCode: _loginCode,
+            failure: failure,
+            kratosError: fieldError(context, AuthFlowFields.login),
           ),
         ),
         TextField(
@@ -87,7 +103,7 @@ class _SignInScreenState extends ConsumerState<SignInScreen>
           onSubmitted: (_) => _submit(),
           decoration: InputDecoration(
             labelText: l10n.password,
-            errorText: fieldError(context, 'password'),
+            errorText: fieldError(context, AuthFlowFields.password),
           ),
         ),
         SubmitButton(

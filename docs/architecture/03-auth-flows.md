@@ -15,8 +15,24 @@ bypassing browser/CSRF controls.
 > Ory docs: *never use API flows to implement browser applications* — they
 > remove CSRF protection. Conversely, never embed browser flows in a mobile WebView.
 
-All passwords go **directly from the client to Kratos public**. They never pass
-through identity-service.
+Admin passwords go **directly from the browser to Kratos public**. Customer
+sign-in and registration go through identity-service (ADR-0014). The app
+sends the email or phone number and the password to
+`POST /v1/auth/{login,registration}`. identity-service finds the account's
+opaque handle `<base32>@login.invalid` and runs the Kratos native API flow
+server side, holding the password in memory only. Kratos never sees the
+address (ADR-0013), and the app never sees a handle before it is signed in.
+
+Steps that need no address stay direct to Kratos:
+
+- verification (with the owner's own handle);
+- the settings flow (the new password after recovery; the recovery code
+  itself goes through `POST /v1/auth/recovery/code`);
+- whoami;
+- logout.
+
+Kratos sends codes through its `http` courier to identity-service, which
+delivers them to the real address (§3.11).
 
 ---
 
@@ -31,23 +47,27 @@ sequenceDiagram
   participant S as identity-service (internal :8081)
   participant M as SMTP
 
-  U->>A: Tap "Sign up"
-  A->>K: GET /self-service/registration/api
-  K-->>A: 200 flow {id, ui.nodes}
-  U->>A: email, name, password
-  A->>K: POST /self-service/registration?flow={id}<br/>{method:"password", traits:{email,name}, password}
-  alt validation error (weak/leaked password, email taken)
-    K-->>A: 400 flow with ui.messages → show errors, retry same flow
+  U->>A: Tap "Sign up" → email or phone, password
+  A->>S: POST /v1/auth/registration {login:{type, value}, password}
+  S->>S: HMAC lookup key → vault row, or seal the address under a new random handle
+  S->>K: GET /self-service/registration/api → POST {method:"password", traits:{login_id: handle}, password}
+  K->>S: pre-registration webhook (parse:true): vault entry exists?
+  alt validation error (weak/leaked password, identifier taken)
+    K-->>S: 400 flow with ui.messages
+    S-->>A: 400 auth_flow_rejected {errors:[{field, code: Kratos id}]} → show errors, retry
   else success
     K->>S: POST /internal/hooks/kratos/after-registration (async, ignored response)
-    S->>S: upsert profile(identity_id)
-    K->>M: verification code email
-    K-->>A: 200 {identity, session, session_token,<br/>continue_with:[set_ory_session_token]}
+    S->>S: upsert profile(identity_id), bind login vault entry
+    K->>S: courier http {recipient: handle, code}
+    S->>M: verification code to the real email (or SMS)
+    K-->>S: 200 {session, session_token}
+    S-->>A: 200 {session_token, session, verification_flow_id?}
     A->>A: store session_token in secure storage
   end
   Note over A,K: Native registration does not return show_verification_ui<br/>(observed on Kratos v26.2.0) — the app starts its own flow
-  A->>K: GET /self-service/verification/api → POST {method:"code", email}
-  K->>M: fresh verification code
+  A->>K: GET /self-service/verification/api → POST {method:"code", email: own handle (whoami)}
+  K->>S: courier http {recipient: handle, code}
+  S->>M: fresh verification code (email or SMS)
   A->>U: "Enter the code we emailed you"
   U->>A: 6-digit code
   A->>K: POST /self-service/verification?flow={vid} {method:"code", code}
@@ -74,10 +94,11 @@ sequenceDiagram
   participant C as Session cache
   participant DB as PostgreSQL (identity)
 
-  A->>K: GET /self-service/login/api
-  K-->>A: 200 flow
-  A->>K: POST /self-service/login?flow={id}<br/>{method:"password", identifier, password}
-  K-->>A: 200 {session, session_token}
+  A->>S: POST /v1/auth/login {login:{type, value}, password}
+  S->>S: HMAC lookup key → handle (random decoy if unknown)
+  S->>K: GET /self-service/login/api → POST {method:"password", identifier: handle, password}
+  K-->>S: 200 {session, session_token} | 400 flow
+  S-->>A: 200 {session_token, session} | 400 auth_flow_rejected (ids only)
   A->>A: save token (Keychain / Keystore)
 
   A->>S: GET /v1/me  Authorization: Bearer <token>
@@ -105,16 +126,24 @@ the session expires. On `401` the app clears the token and returns to sign-in.
 sequenceDiagram
   autonumber
   participant A as Mobile App
+  participant S as identity-service
   participant K as Kratos public
   participant M as SMTP
-  A->>K: GET /self-service/recovery/api
-  A->>K: POST /self-service/recovery?flow={id} {method:"code", email}
-  K->>M: recovery code (sent only if account exists; response is identical either way)
-  A->>K: POST /self-service/recovery?flow={id} {method:"code", code}
-  K-->>A: 200 continue_with [set_ory_session_token, show_settings_ui]<br/>(requires feature_flags.use_continue_with_transitions: true)
-  A->>K: POST /self-service/settings?flow={sid} {method:"password", password}
+  A->>S: POST /v1/auth/recovery {login:{type, value}}
+  S->>K: GET /self-service/recovery/api → POST {method:"code", email: handle or decoy}
+  S-->>A: 200 {recovery_id} (flow id sealed with the login KEK; identical shape whether or not the account exists)
+  K->>M: recovery code via identity-service courier (sent only if the account exists)
+  A->>S: POST /v1/auth/recovery/code {recovery_id, code}
+  S->>K: POST /self-service/recovery?flow={id} {method:"code", code}
+  K-->>S: 200 continue_with [set_ory_session_token, show_settings_ui]<br/>(requires feature_flags.use_continue_with_transitions: true)
+  S-->>A: 200 {session_token, settings_flow_id} | 400 auth_flow_rejected (4060006) | 410 auth_flow_expired
+  A->>K: POST /self-service/settings?flow={sid} {method:"password", password}<br/>X-Session-Token
   K-->>A: 200 settings saved
 ```
+
+The Kratos flow id never reaches the app in clear. `GET
+/self-service/recovery/flows?id=` is public and its `email` node shows the
+handle (ADR-0014, found in review).
 
 Recovery is configured to revoke other sessions (`revoke_active_sessions`
 after recovery).
@@ -275,3 +304,21 @@ Kratos as its login & consent provider. Existing clients keep using Kratos
 sessions; only new clients use OAuth2, and identity-service learns to accept
 Hydra JWT access tokens in addition to sessions
 ([ADR-0002](../adr/0002-kratos-sessions-over-oauth2.md)).
+
+## 3.11 Pseudonymous customer login identifiers (ADR-0013, ADR-0014)
+
+Full diagrams per flow, the API calls between services, pros/cons and
+future directions: [10-pseudonymous-login](10-pseudonymous-login.md).
+
+| Step | Who | What |
+| --- | --- | --- |
+| Look up | App → identity-service `POST /v1/auth/{login,registration,recovery}` (+ `/recovery/code`) | Normalise (email lower-cased, phone E.164 with the default country `84`), compute the HMAC lookup key in OpenBao, read the vault row. Registration stores the address (encrypted) under a new random handle. No handle is ever returned to an unauthenticated caller. Rate limited per IP, per network and per account (every sign-in attempt). |
+| Register | identity-service → Kratos (API flow) | `traits.login_id = handle`. The pre-registration webhook (`response.parse: true`) rejects a handle without a vault entry (4049002), a legacy `email` trait (4049001) and, during the migration window, an address that a legacy customer already uses (4000007). |
+| Bind | Kratos → after-registration webhook (or lazily on `GET /v1/me`) | The vault entry is bound to the identity id. The binding uses only the authoritative `login_id` from Kratos. |
+| Deliver | Kratos courier `http` → `POST /internal/hooks/kratos/courier` (courier key) | Checks that the payload's identity really has this recipient, decrypts the address, renders the vi/en message and sends email or SMS. Duplicates are dropped (keyed hash), as are messages over quota (5/h and 20/day per recipient, SMS budget). Permanent failures get 204, transient ones 503, which makes Kratos retry. |
+| Show | `GET /v1/me` / admin views | The owner sees `login {type, value}`. Admins see `login {type, masked}`. A reveal (`fields: ["login"]`) is audited. |
+
+The Kratos `profile` settings method is disabled, so a customer cannot repoint
+`login_id`. Admin identities keep their plaintext work email; their Kratos
+mail also goes through the courier webhook, which sends it only to the
+admin's own address.

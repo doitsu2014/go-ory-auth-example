@@ -53,7 +53,6 @@ void main() {
   testWidgets('startup without token lands on sign-in', (tester) async {
     final repo = MockAuthRepository();
     when(repo.restoreSession).thenAnswer((_) async => null);
-    when(repo.startLogin).thenAnswer((_) async => flowWith());
     await tester.pumpWidget(
       ProviderScope(
         retry: (_, _) => null,

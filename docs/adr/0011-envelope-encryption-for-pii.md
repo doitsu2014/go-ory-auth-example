@@ -54,3 +54,11 @@ field `name` (`customer_pii.name_ct`, same DEK and AAD scheme). Existing names
 are moved by `identity-service pii migrate-kratos-names` (08 §8.11). The
 customer email is the only customer PII left in plaintext, in Kratos
 (accepted risk, 06-security §6.7).
+
+## Amendment (2026-10-04, intent 261004-pseudonymize-customer-login)
+
+The customer login identifier (email or phone) left Kratos too: Kratos holds
+a pseudonym, and the address is stored in the `login_identifier` vault,
+sealed directly with Transit key `identity-login-kek` instead of a
+per-customer DEK ([ADR-0013](0013-pseudonymous-customer-login-identifiers.md)).
+No customer PII is left in plaintext in any store.

@@ -338,7 +338,7 @@ void main() {
       await openEditor(tester);
       await save(tester);
       expect(
-        find.text('Verify your email address to continue.'),
+        find.text('Verify your email or phone number to continue.'),
         findsOneWidget,
       );
       await tester.tap(find.byKey(const Key('personalInfo.verifyNow')));

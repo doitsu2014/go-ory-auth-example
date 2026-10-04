@@ -20,7 +20,7 @@ go-ory-auth-example/
 │       ├── kratos/
 │       │   ├── kratos.yml.tmpl            # rendered at deploy (webhook key injected)
 │       │   ├── identity-schemas/
-│       │   │   ├── customer.v1.json
+│       │   │   ├── customer.v2.json (+ customer.v2.transition.json)
 │       │   │   └── admin.v1.json
 │       │   ├── webhooks/after-{registration,login}.jsonnet
 │       │   └── courier-templates/        # vi/en email templates

@@ -7,16 +7,18 @@ on**, and what it must **never** do.
 
 | | |
 | --- | --- |
-| **Owns** | Identities, traits, credentials (password hashes, TOTP secrets, WebAuthn keys, recovery codes), sessions, self-service flows, verification/recovery emails (courier) |
+| **Owns** | Identities, traits (customers: only the pseudonymous `login_id`, ADR-0013), credentials (password hashes, TOTP secrets, WebAuthn keys, recovery codes), sessions, self-service flows, the courier queue (delivery is done by identity-service over `http`) |
 | **Exposes** | Public API `:4433` (self-service flows, `/sessions/whoami`, logout) — internet-facing via `auth.<domain>`. Admin API `:4434` (identity CRUD, session revoke, recovery links) — **private only** |
-| **Depends on** | PostgreSQL db `kratos`, SMTP, identity-service webhook endpoint |
+| **Depends on** | PostgreSQL db `kratos`, identity-service webhook endpoints (pre/after-registration, after-login, courier) |
 | **Config** | `deploy/ory/kratos/kratos.yml.tmpl` (rendered at deploy time), identity schemas in `deploy/ory/kratos/identity-schemas/`, webhook body templates (Jsonnet) |
 | **Never** | Be extended by forking; be read via SQL by other components; expose `:4434` publicly |
 
 Enabled self-service methods (v1): `password`, `code` (verification &
 recovery only, with `passwordless_enabled: false` and `mfa_enabled: false`
 pinned so that email OTP can never count as a login factor), `totp`,
-`lookup_secret` (backup codes). Later: `webauthn`/`passkey`, `oidc`.
+`lookup_secret` (backup codes). Later: `webauthn`/`passkey`, `oidc`. The
+`profile` settings method is **disabled**, so traits never change through
+self-service (ADR-0013: a customer cannot repoint `login_id`).
 
 ## 2.2 Ory Keto — authorization
 
@@ -68,9 +70,9 @@ around identity**, not a replacement for Kratos.
 | | |
 | --- | --- |
 | **Owns** | `identity` database: customer/admin **profiles** (app-specific data keyed by Kratos identity id), **audit log** of admin actions |
-| **Exposes** | `:8080` public REST `/v1/*` (customers, bearer only) and `/admin/v1/*` (admins, cookie only) on `api.<domain>`; `:8081` **webhook-only** `/internal/hooks/kratos/*` (reachable only by Kratos); `:9090` ops `/healthz`, `/readyz`, `/metrics` (probes + Prometheus only) |
-| **Depends on** | Kratos public (session check), Kratos admin (identity management, recovery codes, session revoke), Keto read/write, PostgreSQL db `identity`, SMTP (admin invitation emails) |
-| **Never** | Receive or store passwords; proxy Kratos self-service flows; read Kratos/Keto tables; trust identity data sent by clients |
+| **Exposes** | `:8080` public REST `/v1/*` (customers, bearer only; `POST /v1/auth/{login,registration,recovery,recovery/code}` are public and rate limited, ADR-0014) and `/admin/v1/*` (admins, cookie only) on `api.<domain>`; `:8081` **webhook-only** `/internal/hooks/kratos/*` (reachable only by Kratos); `:9090` ops `/healthz`, `/readyz`, `/metrics` (probes + Prometheus only) |
+| **Depends on** | Kratos public (session check; customer login, registration and recovery API flows including the recovery code step, ADR-0014), Kratos admin (identity management, recovery codes, session revoke), Keto read/write, PostgreSQL db `identity`, OpenBao Transit, SMTP (invitations and every Kratos message), SMS provider (phone logins) |
+| **Never** | Store or log passwords (customer passwords pass through memory only, for `POST /v1/auth/{login,registration}`, ADR-0014); proxy admin flows or the customer verification and settings flows; return a Kratos recovery flow id in clear (it is sealed as `recovery_id`); read Kratos/Keto tables; trust identity data sent by clients |
 
 Responsibilities:
 
@@ -135,7 +137,8 @@ One cluster (v16+), three databases, three login roles. See
 | Session validation for our API | provides | | **R** | | |
 | Roles & permissions | | **R** (data) | **R** (enforce) | hides UI | |
 | Profile data | | | **R** | | |
-| Customer email / name (traits) | **R** | | reads via admin API | | edits via settings flow |
+| Customer login handle (trait `login_id`) | **R** | | creates, looks up, binds, migrates | | uses its own (whoami) for verification / refresh |
+| Customer email / phone (login vault, encrypted) | | | **R** | masked / reveal | sends to `POST /v1/auth/*` |
 | Audit of admin actions | | | **R** | | |
 
 R = responsible / source of truth.

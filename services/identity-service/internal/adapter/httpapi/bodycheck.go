@@ -58,11 +58,33 @@ var strictBodies = map[string]prop{
 	}},
 	"POST /admin/v1/customers/lookup": {kind: kindObject, props: map[string]prop{
 		"phone_number": {kind: kindString},
+		"login":        {kind: kindObject, props: map[string]prop{"type": {kind: kindString}, "value": {kind: kindString}}},
+	}},
+	// Public customer auth (PLX-NFR-01): exactly these properties.
+	"POST /v1/auth/login":        credentialsBody,
+	"POST /v1/auth/registration": credentialsBody,
+	"POST /v1/auth/recovery": {kind: kindObject, props: map[string]prop{
+		"login": loginProp,
+	}},
+	"POST /v1/auth/recovery/code": {kind: kindObject, props: map[string]prop{
+		"recovery_id": {kind: kindString}, "code": {kind: kindString},
 	}},
 	// additionalProperties: false (M2M-FR-08).
 	"POST /admin/v1/service-clients": {kind: kindObject, props: map[string]prop{
 		"name": {kind: kindString}, "owner": {kind: kindString}, "scopes": {kind: kindStringArray},
 	}},
+}
+
+var (
+	loginProp       = prop{kind: kindObject, props: map[string]prop{"type": {kind: kindString}, "value": {kind: kindString}}}
+	credentialsBody = prop{kind: kindObject, props: map[string]prop{"login": loginProp, "password": {kind: kindString}}}
+)
+
+// forbiddenQuery lists query parameters a route refuses outright. The
+// generated wrapper ignores unknown parameters; these carried PII and were
+// removed from the contract (PLI-FR-11: PII never in URLs).
+var forbiddenQuery = map[string][]string{
+	"GET /admin/v1/customers": {"email"},
 }
 
 // strictBodyMiddleware validates the bodies listed in strictBodies. It runs
@@ -72,6 +94,13 @@ func strictBodyMiddleware(next http.Handler) http.Handler {
 		pattern := ""
 		if rc := chi.RouteContext(r.Context()); rc != nil {
 			pattern = rc.RoutePattern()
+		}
+		for _, q := range forbiddenQuery[routeKey(r.Method, pattern)] {
+			if r.URL.Query().Has(q) {
+				// The value is never echoed (it may be PII).
+				writeProblem(w, r, CodeInvalidRequest, "", []app.FieldError{{Field: q, Code: "unsupported"}})
+				return
+			}
 		}
 		schema, ok := strictBodies[routeKey(r.Method, pattern)]
 		if !ok {

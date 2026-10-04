@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/identity"
+	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/login"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/profile"
 )
 
@@ -13,11 +14,16 @@ import (
 type MeView struct {
 	Principal identity.Principal
 	Profile   profile.Profile
+	// Login is the caller's own login identifier (PLI-FR-07).
+	Login login.Identifier
 }
 
 // MeService implements the customer self-service use cases (FR-09, FR-10).
 type MeService struct {
 	Profiles ProfileRepo
+	// Logins reads the caller's login identifier (ADR-0013); nil falls back
+	// to the session's legacy email.
+	Logins *LoginIdentifierService
 }
 
 // GetMe returns the caller's profile, creating it lazily (ADR-0008).
@@ -30,7 +36,18 @@ func (s *MeService) GetMe(ctx context.Context, p identity.Principal) (MeView, er
 	if err != nil {
 		return MeView{}, err
 	}
-	return MeView{Principal: p, Profile: pr}, nil
+	l, err := s.login(ctx, p)
+	if err != nil {
+		return MeView{}, err
+	}
+	return MeView{Principal: p, Profile: pr, Login: l}, nil
+}
+
+func (s *MeService) login(ctx context.Context, p identity.Principal) (login.Identifier, error) {
+	if s.Logins != nil {
+		return s.Logins.Own(ctx, p)
+	}
+	return legacyIdentifier(p.LoginID)
 }
 
 // UpdateMe applies a partial profile update. Permission: self (customer
@@ -53,7 +70,11 @@ func (s *MeService) UpdateMe(ctx context.Context, p identity.Principal, patch pr
 	if err != nil {
 		return MeView{}, fmt.Errorf("update profile: %w", err)
 	}
-	return MeView{Principal: p, Profile: updated}, nil
+	l, err := s.login(ctx, p)
+	if err != nil {
+		return MeView{}, err
+	}
+	return MeView{Principal: p, Profile: updated, Login: l}, nil
 }
 
 func (s *MeService) ensure(ctx context.Context, p identity.Principal) (profile.Profile, error) {

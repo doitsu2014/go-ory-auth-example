@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/app"
+	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/login"
 )
 
 // SMTP implements app.Mailer.
@@ -99,6 +100,16 @@ func (s *SMTP) SendInvitation(ctx context.Context, inv app.Invitation) error {
 	return s.send(ctx, to.Address, msg)
 }
 
+// SendLoginMessage implements app.Mailer (PLI-FR-05). The code is a secret
+// and the recipient is personal data: neither appears in errors.
+func (s *SMTP) SendLoginMessage(ctx context.Context, to string, m login.Message) error {
+	addr, err := mail.ParseAddress(to)
+	if err != nil || addr.Address != to {
+		return fmt.Errorf("%w: invalid recipient", app.ErrPermanentDelivery)
+	}
+	return s.send(ctx, addr.Address, s.compose(addr.Address, m.Subject, []byte(m.Text)))
+}
+
 func (s *SMTP) compose(to, subject string, body []byte) []byte {
 	var b bytes.Buffer
 	idBytes := make([]byte, 12)
@@ -154,6 +165,11 @@ func (s *SMTP) send(ctx context.Context, to string, msg []byte) error {
 		return smtpErr("mail from", err)
 	}
 	if err := c.Rcpt(to); err != nil {
+		// 5xx on RCPT (mailbox unknown, rejected) cannot succeed on retry.
+		var tp *textproto.Error
+		if errors.As(err, &tp) && tp.Code >= 500 {
+			return fmt.Errorf("%w: %v", app.ErrPermanentDelivery, smtpErr("rcpt", err))
+		}
 		return smtpErr("rcpt", err)
 	}
 	w, err := c.Data()

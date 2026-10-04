@@ -46,6 +46,7 @@ func reposFor(q *sqlcgen.Queries) app.Repos {
 	return app.Repos{
 		Profiles: ProfileRepo{q}, Audit: AuditRepo{q}, Idempotency: IdempotencyRepo{q}, Locks: Locker{q},
 		SubjectKeys: SubjectKeyRepo{q}, PersonalInfo: CustomerPIIRepo{q},
+		Logins: LoginIdentifierRepo{q}, Dispatches: CourierDispatchRepo{q},
 	}
 }
 

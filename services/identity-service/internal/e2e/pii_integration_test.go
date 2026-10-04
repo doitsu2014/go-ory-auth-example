@@ -64,7 +64,7 @@ func (s *stack) verifiedCustomer(t *testing.T) (string, uuid.UUID) {
 		_, _ = s.store.Repos().SubjectKeys.Delete(context.Background(), id)
 		s.env.DeleteIdentity(t, id)
 	})
-	s.env.VerifyEmail(t, email)
+	s.env.VerifyEmail(t, email, reg.SessionToken)
 	s.verifier.Invalidate(id)
 	return reg.SessionToken, id
 }
@@ -411,7 +411,8 @@ func TestDD8_E2E_RevealAuditAtomicity(t *testing.T) {
 }
 
 // TestPIINFR06_E2E_OpenBaoUnreachable: PII endpoints fail closed with 503
-// dependency_unavailable; other endpoints are unaffected.
+// dependency_unavailable. GET /v1/me reads the encrypted login identifier
+// since ADR-0013, so it fails closed too (PLI-FR-07, PLI-NFR-06).
 func TestPIINFR06_E2E_OpenBaoUnreachable(t *testing.T) {
 	up := newStack(t)
 	tok, _ := up.verifiedCustomer(t)
@@ -429,8 +430,11 @@ func TestPIINFR06_E2E_OpenBaoUnreachable(t *testing.T) {
 			t.Fatalf("%s with OpenBao down: %d %s", m, st, p.Code)
 		}
 	}
-	if st := s.api(t, "GET", "/v1/me", call{bearer: tok}, nil, nil); st != 200 {
-		t.Fatalf("non-PII endpoint: %d", st)
+	if st := s.api(t, "GET", "/v1/me", call{bearer: tok}, nil, &p); st != 503 || p.Code != "dependency_unavailable" {
+		t.Fatalf("GET /v1/me with OpenBao down: %d %s", st, p.Code)
+	}
+	if st := s.api(t, "GET", "/v1/me/nope", call{bearer: tok}, nil, nil); st != 404 {
+		t.Fatalf("routing unaffected: %d", st)
 	}
 	noPII(t, "logs", []byte(s.logs.String()))
 }

@@ -9,6 +9,7 @@ environment:
 
 dependencies:
   built_value: ^8.13.0
+  crypto: ^3.0.7
   cupertino_icons: ^1.0.8
   dio: ^5.11.1
   flutter:

@@ -1,3 +1,5 @@
+import 'package:go_ory_auth_mobile/core/identity/customer_auth_client.dart';
+import 'package:go_ory_auth_mobile/core/identity/login_input.dart';
 import 'package:go_ory_auth_mobile/core/kratos/kratos_client.dart';
 import 'package:go_ory_auth_mobile/core/kratos/kratos_error_mapper.dart';
 import 'package:go_ory_auth_mobile/core/kratos/kratos_models.dart';
@@ -29,15 +31,26 @@ class RecoveryGrant {
   String toString() => 'RecoveryGrant($settingsFlowId, <redacted>)';
 }
 
-/// Registration, login, verification, recovery and logout over Kratos native
-/// flows. Owns writing/wiping the session token. Throws [AppFailure] only.
+/// Registration, login, verification, recovery and logout. Owns
+/// writing/wiping the session token. Throws [AppFailure] only.
+///
+/// What the customer types (email / phone number) goes only to
+/// identity-service ([CustomerAuthApi], ADR-0014), which signs in, registers
+/// and starts recovery with the account's opaque Kratos handle. Steps that
+/// need no address (codes, settings, logout) talk to Kratos native flows
+/// directly; verification uses the signed-in owner's own handle.
 class AuthRepository {
-  AuthRepository({required KratosClient kratos, required TokenStore tokens})
-    : _kratos = kratos,
-      _tokens = tokens;
+  AuthRepository({
+    required KratosClient kratos,
+    required TokenStore tokens,
+    required CustomerAuthApi customerAuth,
+  }) : _kratos = kratos,
+       _tokens = tokens,
+       _customerAuth = customerAuth;
 
   final KratosClient _kratos;
   final TokenStore _tokens;
+  final CustomerAuthApi _customerAuth;
 
   Future<T> _guard<T>(Future<T> Function() body) async {
     try {
@@ -45,6 +58,12 @@ class AuthRepository {
     } on Object catch (e) {
       throw mapKratosError(e);
     }
+  }
+
+  /// The signed-in owner's handle; Kratos is never addressed with "".
+  String _handle(String loginId) {
+    if (loginId.isEmpty) throw const UnauthenticatedFailure();
+    return loginId;
   }
 
   // --- session ------------------------------------------------------------
@@ -79,21 +98,13 @@ class AuthRepository {
         await _kratos.toSession(sessionToken: result.sessionToken);
   }
 
-  // --- registration ------------------------------------------------------
-
-  Future<KratosFlow> startRegistration() =>
-      _guard(_kratos.createRegistrationFlow);
+  // --- registration and login (identity-service) --------------------------
 
   Future<RegistrationOutcome> register({
-    required String flowId,
-    required String email,
+    required LoginInput login,
     required String password,
   }) => _guard(() async {
-    final result = await _kratos.submitRegistration(
-      flowId: flowId,
-      email: email,
-      password: password,
-    );
+    final result = await _customerAuth.register(login, password);
     final session = await _persist(result);
     return RegistrationOutcome(
       session: session,
@@ -101,40 +112,37 @@ class AuthRepository {
     );
   });
 
-  // --- login --------------------------------------------------------------
-
-  Future<KratosFlow> startLogin() => _guard(_kratos.createLoginFlow);
-
+  /// Signs in with what the customer typed: one call to identity-service.
   Future<KratosSession> login({
-    required String flowId,
-    required String identifier,
+    required LoginInput login,
     required String password,
   }) => _guard(() async {
-    final result = await _kratos.submitLogin(
-      flowId: flowId,
-      identifier: identifier,
-      password: password,
-    );
+    final result = await _customerAuth.login(login, password);
     return await _persist(result);
   });
 
   // --- verification -------------------------------------------------------
 
-  /// Creates a verification flow and asks Kratos to email a code.
-  Future<KratosFlow> startVerification(String email) => _guard(() async {
-    final flow = await _kratos.createVerificationFlow();
-    return await _kratos.submitVerification(flowId: flow.id, email: email);
-  });
+  /// Creates a verification flow and asks Kratos to send a code (email or
+  /// SMS, chosen server side from the handle). [loginId] is the signed-in
+  /// owner's handle (`traits.login_id`).
+  Future<KratosFlow> startVerification({required String loginId}) =>
+      _guard(() async {
+        final email = _handle(loginId);
+        final flow = await _kratos.createVerificationFlow();
+        return await _kratos.submitVerification(flowId: flow.id, email: email);
+      });
 
   /// Resends a code on an existing flow.
   Future<KratosFlow> resendVerificationCode({
     required String flowId,
-    required String email,
-  }) => _guard(
-    () async => _codeResult(
+    required String loginId,
+  }) => _guard(() async {
+    final email = _handle(loginId);
+    return _codeResult(
       await _kratos.submitVerification(flowId: flowId, email: email),
-    ),
-  );
+    );
+  });
 
   /// Submits the emailed code. A wrong code comes back as `200` with an error
   /// message, which is surfaced as [FlowValidationFailure].
@@ -155,46 +163,35 @@ class AuthRepository {
 
   // --- recovery -----------------------------------------------------------
 
-  Future<KratosFlow> startRecovery() => _guard(_kratos.createRecoveryFlow);
+  /// Starts recovery through identity-service, which answers the same
+  /// whether or not the account exists. The returned flow's id is the sealed
+  /// `recovery_id` the code is then submitted with.
+  Future<KratosFlow> requestRecoveryCode({required LoginInput login}) =>
+      _guard(() async {
+        final flowId = await _customerAuth.startRecovery(login);
+        // Kratos's own "code sent if the account exists" notice (1060003).
+        return KratosFlow(
+          id: flowId,
+          state: 'sent_email',
+          messages: const [UiText(id: 1060003, text: '', type: 'info')],
+        );
+      });
 
-  Future<KratosFlow> requestRecoveryCode({
-    required String flowId,
-    required String email,
-  }) => _guard(
-    () async =>
-        _codeResult(await _kratos.submitRecovery(flowId: flowId, email: email)),
-  );
-
-  /// Exchanges the recovery code for a privileged session + settings flow
-  /// (`continue_with`).
+  /// Exchanges the recovery code for a privileged session + settings flow,
+  /// through identity-service: [flowId] is the sealed `recovery_id` from
+  /// [requestRecoveryCode], never a Kratos flow id.
   Future<RecoveryGrant> submitRecoveryCode({
     required String flowId,
     required String code,
   }) => _guard(() async {
-    final KratosFlow flow;
-    try {
-      flow = await _kratos.submitRecovery(flowId: flowId, code: code);
-    } on ApiFailure catch (e) {
-      if (e.code == 'browser_location_change_required') {
-        // Kratos answered with the browser redirect instead of
-        // continue_with (needs `feature_flags.use_continue_with_transitions`).
-        throw const ApiFailure('recovery_session_unavailable', status: 422);
-      }
-      rethrow;
-    }
-    String? token;
-    String? settingsFlowId;
-    for (final c in flow.continueWith) {
-      if (c is ContinueWithSetSessionToken) token = c.sessionToken;
-      if (c is ContinueWithSettingsUi) settingsFlowId = c.flowId;
-    }
-    if (token == null || token.isEmpty) {
-      _codeResult(flow);
-      throw const ApiFailure('recovery_session_unavailable');
-    }
-    settingsFlowId ??= (await _kratos.createSettingsFlow(sessionToken: token))
-        .id;
-    return RecoveryGrant(settingsFlowId: settingsFlowId, sessionToken: token);
+    final g = await _customerAuth.submitRecoveryCode(flowId, code);
+    final settingsFlowId = g.settingsFlowId.isNotEmpty
+        ? g.settingsFlowId
+        : (await _kratos.createSettingsFlow(sessionToken: g.sessionToken)).id;
+    return RecoveryGrant(
+      settingsFlowId: settingsFlowId,
+      sessionToken: g.sessionToken,
+    );
   });
 
   /// Sets the new password in the privileged settings flow, then signs in
@@ -235,8 +232,8 @@ class AuthRepository {
 
   // --- logout -------------------------------------------------------------
 
-  /// `performNativeLogout` then wipe storage. Storage is wiped even if Kratos
-  /// is unreachable or the session is already gone.
+  /// `performNativeLogout` then wipe the session token. Storage is wiped
+  /// even if Kratos is unreachable or the session is already gone.
   Future<void> logout() async {
     final token = await _tokens.read();
     try {

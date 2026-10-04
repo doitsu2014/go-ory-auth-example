@@ -77,7 +77,7 @@ describe("RequireAdmin in the router", () => {
       http.get(`${API}/admin/v1/customers`, () => HttpResponse.json({ items: [customer(1)] })),
     );
     renderApp("/customers");
-    expect(await screen.findByText("customer1@example.com")).toBeInTheDocument();
+    expect(await screen.findByText("Customer 1")).toBeInTheDocument();
     const nav = screen.getByRole("navigation", { name: "Main navigation" });
     expect(nav).toHaveTextContent("Customers");
     expect(nav).toHaveTextContent("Audit log");

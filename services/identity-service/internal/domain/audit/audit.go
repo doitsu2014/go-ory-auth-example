@@ -34,6 +34,16 @@ const (
 	// Kratos without storing it (details: fields, reason erased |
 	// already_migrated | empty | invalid; never the value).
 	ActionCustomerPIINameTraitRemoved Action = "customer.pii.name_trait_removed"
+	// Login identifiers (ADR-0013; details hold the kind and counters only,
+	// never the address or the pseudonym).
+	// ActionCustomerLoginMigrated: the operator CLI moved a legacy email
+	// trait into the encrypted login vault (system actor).
+	ActionCustomerLoginMigrated Action = "customer.login.migrated"
+	// ActionCustomerLoginErased: the login of a deleted identity was removed
+	// (erasure ledger, re-applied after a restore).
+	ActionCustomerLoginErased Action = "customer.login.erased"
+	// ActionCustomerLoginLookup: an admin looked customers up by login.
+	ActionCustomerLoginLookup Action = "customer.login.lookup"
 	// Machine-to-machine service clients (details hold name and scopes,
 	// never the secret).
 	ActionServiceClientCreated       Action = "service_client.created"

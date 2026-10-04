@@ -12,6 +12,7 @@ import { Button } from "../../shared/ui/Button";
 import { Card, PageHeader } from "../../shared/ui/Card";
 import { ConfirmDialog } from "../../shared/ui/Dialog";
 import { Spinner } from "../../shared/ui/Spinner";
+import { LoginValue } from "./LoginValue";
 import { PersonalInfoCard } from "./PersonalInfoCard";
 import { ReasonDialog } from "./ReasonDialog";
 import { StateBadge } from "./StateBadge";
@@ -24,7 +25,7 @@ import {
 
 type DialogKind = "disable" | "enable" | "revoke" | null;
 
-/** /customers/:id — detail + personal info (masked / reveal) + disable/enable (with reason) + revoke sessions, each behind a confirm dialog. */
+/** /customers/:id — detail (masked login) + personal info (masked / reveal) + disable/enable (with reason) + revoke sessions, each behind a confirm dialog. */
 export function CustomerDetailPage() {
   const { id = "" } = useParams();
   const { t, i18n } = useTranslation();
@@ -54,12 +55,14 @@ export function CustomerDetailPage() {
 
   const c = query.data;
   const close = () => setDialog(null);
+  // Masked login, else nickname, else id: the real contact is never shown unrevealed.
+  const label = c.login?.masked ?? c.display_name ?? c.id;
 
   return (
     <div className="space-y-6">
       {back}
       <PageHeader
-        title={c.email}
+        title={label}
         actions={
           canManage ? (
             <div className="flex flex-wrap gap-2">
@@ -82,9 +85,13 @@ export function CustomerDetailPage() {
           {(
             [
               [t("customers.id"), <code key="id">{c.id}</code>],
+              [
+                t("customers.login"),
+                <LoginValue key="login" login={c.login} unavailable={c.login_unavailable} />,
+              ],
               [t("customers.displayName"), c.display_name ?? "—"],
               [t("customers.state"), <StateBadge key="s" state={c.state} />],
-              [t("customers.emailVerified"), c.email_verified ? t("admins.yes") : t("admins.no")],
+              [t("customers.loginVerified"), c.email_verified ? t("admins.yes") : t("admins.no")],
               [t("customers.created"), formatDateTime(c.created_at, i18n.language)],
             ] as const
           ).map(([label, value]) => (
@@ -97,12 +104,12 @@ export function CustomerDetailPage() {
           ))}
         </dl>
       </Card>
-      <PersonalInfoCard key={c.id} customerId={c.id} />
+      <PersonalInfoCard key={c.id} customerId={c.id} hasLogin={!!c.login} />
 
       <ReasonDialog
         open={dialog === "disable"}
         title={t("customers.disableConfirmTitle")}
-        description={t("customers.disableConfirmBody", { email: c.email })}
+        description={t("customers.disableConfirmBody", { customer: label })}
         confirmLabel={t("customers.disable")}
         requireReason
         danger
@@ -120,7 +127,7 @@ export function CustomerDetailPage() {
       <ReasonDialog
         open={dialog === "enable"}
         title={t("customers.enableConfirmTitle")}
-        description={t("customers.enableConfirmBody", { email: c.email })}
+        description={t("customers.enableConfirmBody", { customer: label })}
         confirmLabel={t("customers.enable")}
         requireReason={false}
         busy={enable.isPending}
@@ -137,7 +144,7 @@ export function CustomerDetailPage() {
       <ConfirmDialog
         open={dialog === "revoke"}
         title={t("customers.revokeConfirmTitle")}
-        description={t("customers.revokeConfirmBody", { email: c.email })}
+        description={t("customers.revokeConfirmBody", { customer: label })}
         confirmLabel={t("customers.revokeSessions")}
         danger
         busy={revoke.isPending}

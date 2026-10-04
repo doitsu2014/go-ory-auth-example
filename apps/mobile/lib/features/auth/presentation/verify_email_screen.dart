@@ -4,15 +4,23 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_ory_auth_mobile/app/providers.dart';
 import 'package:go_ory_auth_mobile/app/routes.dart';
+import 'package:go_ory_auth_mobile/core/identity/login_input.dart';
 import 'package:go_ory_auth_mobile/core/kratos/kratos_models.dart';
+import 'package:go_ory_auth_mobile/core/network/app_failure.dart';
 import 'package:go_ory_auth_mobile/features/auth/presentation/auth_controller.dart';
 import 'package:go_ory_auth_mobile/features/auth/presentation/widgets/flow_form.dart';
+import 'package:go_ory_auth_mobile/features/profile/domain/me.dart';
+import 'package:go_ory_auth_mobile/features/profile/presentation/profile_screen.dart';
 import 'package:go_ory_auth_mobile/l10n/gen/app_localizations.dart';
 import 'package:go_router/go_router.dart';
 
-/// Email verification by code. Uses the flow from `continue_with:
-/// show_verification_ui` when Kratos sent one; otherwise starts a native
-/// verification flow, which emails a fresh code.
+/// Login identifier verification by code (email or SMS). Uses the flow from
+/// `continue_with: show_verification_ui` when Kratos sent one; otherwise
+/// starts a native verification flow, which sends a fresh code.
+///
+/// Kratos is addressed with the session's own handle (`loginId`); the
+/// contact shown to the user comes from `GET /v1/me` (`login.value`). The
+/// handle is never displayed (PLI-FR-08).
 class VerifyEmailScreen extends ConsumerStatefulWidget {
   const VerifyEmailScreen({super.key});
 
@@ -26,9 +34,14 @@ class _VerifyEmailScreenState extends ConsumerState<VerifyEmailScreen>
   final _code = TextEditingController();
   String? _providedFlowId;
 
-  String get _email {
+  /// The session's handle. Without a session (or a session without a
+  /// login id) Kratos must not be called with an empty identifier: this is
+  /// treated as a lost session ([UnauthenticatedFailure] → wipe → sign-in).
+  String get _loginId {
     final s = ref.read(authControllerProvider);
-    return s is Authenticated ? s.email : '';
+    final loginId = s is Authenticated ? s.loginId : '';
+    if (loginId.isEmpty) throw const UnauthenticatedFailure();
+    return loginId;
   }
 
   @override
@@ -38,7 +51,9 @@ class _VerifyEmailScreenState extends ConsumerState<VerifyEmailScreen>
       _providedFlowId = null;
       return Future.value(KratosFlow(id: provided, state: 'sent_email'));
     }
-    return ref.read(authRepositoryProvider).startVerification(_email);
+    return ref
+        .read(authRepositoryProvider)
+        .startVerification(loginId: _loginId);
   };
 
   @override
@@ -67,9 +82,17 @@ class _VerifyEmailScreenState extends ConsumerState<VerifyEmailScreen>
   Future<void> _resend() => runSubmit((flow) async {
     final result = await ref
         .read(authRepositoryProvider)
-        .resendVerificationCode(flowId: flow!.id, email: _email);
+        .resendVerificationCode(flowId: flow!.id, loginId: _loginId);
     setState(() => this.flow = result);
   });
+
+  static String _body(AppLocalizations l10n, LoginContact? contact) {
+    if (contact == null || contact.value.isEmpty) return l10n.verifyBodyGeneric;
+    return switch (contact.type) {
+      LoginType.email => l10n.verifyEmailBody(contact.value),
+      LoginType.phone => l10n.verifyPhoneBody(contact.value),
+    };
+  }
 
   void _later() {
     ref.read(authControllerProvider.notifier).skipVerification();
@@ -79,10 +102,11 @@ class _VerifyEmailScreenState extends ConsumerState<VerifyEmailScreen>
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
+    final contact = ref.watch(meProvider).value?.login;
     return FormPage(
       title: l10n.verifyEmailTitle,
       children: [
-        Text(l10n.verifyEmailBody(_email)),
+        Text(_body(l10n, contact), key: const Key('verify.body')),
         FailureBanner(failure: failure, onRetry: loadFlow),
         FlowMessages(messages: globalMessages(_bound)),
         TextField(

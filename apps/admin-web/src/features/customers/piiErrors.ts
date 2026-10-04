@@ -9,13 +9,17 @@ const PII_CODES = ["rate_limited", "forbidden", "not_found", "dependency_unavail
 export function piiErrorMessage(
   t: TFunction,
   err: unknown,
-  context: "reveal" | "lookup" | "masked",
+  context: "reveal" | "lookup" | "loginLookup" | "masked",
 ): string {
   if (isApiError(err)) {
     const code = PII_CODES.find((c) => c === err.code);
-    if (code) return t(`pii.errors.${context}.${code}`);
+    // Both lookups share one endpoint, rate limit and permission.
+    if (code) return t(`pii.errors.${context === "loginLookup" ? "lookup" : context}.${code}`);
     if (context === "lookup" && err.code === "validation_failed") {
       return t("pii.lookup.invalid");
+    }
+    if (context === "loginLookup" && err.code === "validation_failed") {
+      return t("customers.loginLookup.invalid");
     }
   }
   return problemMessage(t, err);

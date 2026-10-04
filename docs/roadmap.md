@@ -54,3 +54,19 @@ linked to its requirement ids.
 
 Social login on mobile (FR-14), passkeys for admins (FR-15), Ory Hydra for
 third-party clients, Oathkeeper when a second service appears, i18n email templates.
+
+Pseudonymous login follow-ups (ADR-0013, ADR-0014), prioritised in
+[10-pseudonymous-login §10.9](architecture/10-pseudonymous-login.md#109-future-directions):
+
+- trusted proxy CIDRs;
+- rotating the handles created before migration 0007;
+- `pii rekey-logins` (now rewrites `lookup_key` only);
+- a shared rate-limit store;
+- restricting the Kratos public API at the ingress (registration and recovery
+  only from identity-service; rate-limit `/self-service/login/api`);
+- timing parity for decoy handles (measure against bcrypt);
+- a lockout-resistant account limit (account+IP key or CAPTCHA);
+- change of login identifier;
+- customer passkeys;
+- multiple login identifiers per customer;
+- a production SMS provider.

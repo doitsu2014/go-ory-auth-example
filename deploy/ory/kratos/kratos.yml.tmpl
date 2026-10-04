@@ -1,10 +1,10 @@
 # Kratos configuration template (local development values).
 #
-# No secret values live in this file. `__KRATOS_WEBHOOK_API_KEY__` is replaced
-# by the kratos-config init container (see deploy/compose/docker-compose.yml);
-# Kratos does not expand ${VAR}. Other secrets come from env overrides that map
-# straight from the config path: SECRETS_COOKIE, SECRETS_CIPHER, DSN,
-# COURIER_SMTP_CONNECTION_URI.
+# No secret values live in this file. `__KRATOS_WEBHOOK_API_KEY__` and
+# `__KRATOS_COURIER_API_KEY__` are replaced by the kratos-config init
+# container (see deploy/compose/docker-compose.yml); Kratos does not expand
+# ${VAR}. Other secrets come from env overrides that map straight from the
+# config path: SECRETS_COOKIE, SECRETS_CIPHER, DSN.
 version: v26.2.0
 
 serve:
@@ -46,8 +46,11 @@ selfservice:
         mfa_enabled: false
     link:
       enabled: false
+    # Disabled (ADR-0013, A1): traits are never changed through settings, so a
+    # customer cannot point login_id at someone else's pseudonym. Neither
+    # client uses it (admins' traits are managed by invitation).
     profile:
-      enabled: true
+      enabled: false
 
   flows:
     error:
@@ -102,6 +105,25 @@ selfservice:
       after:
         password:
           hooks:
+            # Pre-persist check (ADR-0013, PLI-FR-04): parse: true runs the hook
+            # before the identity is stored; a 400 with messages rejects it.
+            # SEC-C07: it is attached to the password method only. Enabling any
+            # other registration method (code, passkey, oidc) MUST add the same
+            # hook under that method, or plaintext registrations get through.
+            - hook: web_hook
+              config:
+                url: __IDENTITY_WEBHOOK_BASE_URL__/internal/hooks/kratos/pre-registration
+                method: POST
+                body: file:///etc/config/kratos/webhooks/pre-registration.jsonnet
+                can_interrupt: true
+                response:
+                  parse: true
+                auth:
+                  type: api_key
+                  config:
+                    name: Authorization
+                    value: __KRATOS_WEBHOOK_API_KEY__
+                    in: header
             - hook: web_hook
               config:
                 url: __IDENTITY_WEBHOOK_BASE_URL__/internal/hooks/kratos/after-registration
@@ -143,7 +165,10 @@ identity:
   default_schema_id: customer
   schemas:
     - id: customer
-      url: file:///etc/config/kratos/identity-schemas/customer.v1.json
+      # Migration window (ADR-0013): legacy email or login_id. Switch to
+      # customer.v2.json after `identity-service pii migrate-kratos-logins`
+      # and LOGIN_MIGRATION_PHASE=complete.
+      url: file:///etc/config/kratos/identity-schemas/customer.v2.transition.json
       selfservice_selectable: true
     - id: admin
       url: file:///etc/config/kratos/identity-schemas/admin.v1.json
@@ -155,7 +180,20 @@ feature_flags:
   # finish password reset (FR-04).
   use_continue_with_transitions: true
 
+# Every Kratos message goes to identity-service (ADR-0013, PLI-FR-05): it
+# resolves pseudonym recipients to the real email/phone and sends its own
+# localised email or SMS. Non-2xx responses are retried.
 courier:
-  smtp:
-    from_address: no-reply@go-ory-auth-example.local
-    from_name: go-ory-auth-example
+  delivery_strategy: http
+  message_retries: 10
+  http:
+    request_config:
+      url: __IDENTITY_WEBHOOK_BASE_URL__/internal/hooks/kratos/courier
+      method: POST
+      body: file:///etc/config/kratos/webhooks/courier.jsonnet
+      auth:
+        type: api_key
+        config:
+          name: Authorization
+          value: __KRATOS_COURIER_API_KEY__
+          in: header

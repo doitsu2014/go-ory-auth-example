@@ -79,10 +79,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
 
   Future<void> _reauthenticate() => runSubmit((_) async {
     final auth = ref.read(authControllerProvider);
-    final email = auth is Authenticated ? auth.email : '';
+    // PLI-FR-09: the session's login_id is the account's own handle; the
+    // customer does not re-type the email / phone.
+    final loginId = auth is Authenticated ? auth.loginId : '';
     final settings = ref.read(settingsRepositoryProvider);
     try {
-      await settings.reauthenticate(identifier: email, password: _current.text);
+      await settings.reauthenticate(
+        identifier: loginId,
+        password: _current.text,
+      );
     } on FlowValidationFailure catch (e) {
       // Keep the settings flow; show the login flow's messages here.
       setState(() => _reauthFlow = e.flow);

@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { describe, expect, it } from "vitest";
 
-import { adminMe, customer, maskedPersonalInfo, problem } from "../../test/fixtures";
+import { MASKED_LOGIN, adminMe, customer, maskedPersonalInfo, problem } from "../../test/fixtures";
 import { renderApp } from "../../test/render";
 import { API, server } from "../../test/server";
 
@@ -42,13 +42,58 @@ describe("CustomerDetailPage details", () => {
       ),
     );
     renderApp(`/customers/${C.id}`);
-    expect(await screen.findByRole("heading", { name: C.email })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: MASKED_LOGIN })).toBeInTheDocument();
     expect(screen.getByText(C.display_name ?? "")).toBeInTheDocument();
     expect(screen.getByText("Display name (nickname)")).toBeInTheDocument();
     expect(screen.queryByText(/Legacy|Kratos/)).toBeNull();
     expect(screen.queryByText("Name")).toBeNull();
     // The real name only appears masked, inside the personal-info card.
     expect(await screen.findByText("A*** N***")).toBeInTheDocument();
+  });
+});
+
+describe("CustomerDetailPage login", () => {
+  it("shows the masked login with its type, never the plaintext", async () => {
+    server.use(
+      http.get(`${API}/admin/v1/me`, () => HttpResponse.json(adminMe())),
+      http.get(`${API}/admin/v1/customers/:id`, () =>
+        HttpResponse.json(customer(7, { login: { type: "phone", masked: "+84*******321" } })),
+      ),
+      http.get(`${API}/admin/v1/customers/:id/personal-info`, () =>
+        HttpResponse.json(maskedPersonalInfo()),
+      ),
+    );
+    renderApp(`/customers/${C.id}`);
+    expect(await screen.findByRole("heading", { name: "+84*******321" })).toBeInTheDocument();
+    const login = screen.getByText("Login").closest("div");
+    expect(login).toHaveTextContent("Phone+84*******321");
+    expect(screen.queryByTestId("login-unavailable")).toBeNull();
+  });
+
+  it("shows a neutral unavailable marker when the key manager is down", async () => {
+    server.use(
+      http.get(`${API}/admin/v1/me`, () => HttpResponse.json(adminMe())),
+      http.get(`${API}/admin/v1/customers/:id`, () =>
+        HttpResponse.json(customer(7, { login: null, login_unavailable: true })),
+      ),
+      http.get(`${API}/admin/v1/customers/:id/personal-info`, () =>
+        HttpResponse.json(maskedPersonalInfo()),
+      ),
+    );
+    renderApp(`/customers/${C.id}`);
+    // Falls back to the nickname as the page title.
+    expect(await screen.findByRole("heading", { name: "Customer 7" })).toBeInTheDocument();
+    expect(screen.getByTestId("login-unavailable")).toHaveTextContent("Unavailable");
+  });
+
+  it("names the customer by masked login in confirmations", async () => {
+    setup();
+    const user = userEvent.setup();
+    renderApp(`/customers/${C.id}`);
+    await user.click(await screen.findByRole("button", { name: "Revoke all sessions" }));
+    expect(
+      screen.getByText(`${MASKED_LOGIN} will be signed out of all devices.`),
+    ).toBeInTheDocument();
   });
 });
 
@@ -107,7 +152,7 @@ describe("CustomerDetailPage disable", () => {
       ),
     );
     renderApp(`/customers/${C.id}`);
-    expect(await screen.findByRole("heading", { name: C.email })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: MASKED_LOGIN })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Disable" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Revoke all sessions" })).toBeNull();
   });

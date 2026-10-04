@@ -5,7 +5,13 @@ import { HttpResponse, http } from "msw";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Permission } from "../../api/client";
-import { adminMe, customer, maskedPersonalInfo, personalInfo, problem } from "../../test/fixtures";
+import {
+  adminMe,
+  customer,
+  maskedPersonalInfo,
+  problem,
+  revealedPersonalInfo,
+} from "../../test/fixtures";
 import { renderApp } from "../../test/render";
 import { API, server } from "../../test/server";
 import { REVEAL_TTL_MS } from "./PersonalInfoCard";
@@ -14,6 +20,7 @@ const C = customer(7);
 const PLAIN_PHONE = "+84901234567";
 const PLAIN_LINE1 = "12 Trang Tien";
 const PLAIN_LAST = "Nguyễn";
+const PLAIN_LOGIN = "customer@example.com";
 
 const BASE: Permission[] = ["view_customers", "manage_customers", "view_audit"];
 
@@ -36,7 +43,7 @@ function setup(opts: { permissions?: Permission[]; revealStatus?: number; code?:
       if (status !== 200) {
         return HttpResponse.json(problem(status, opts.code ?? "internal"), { status });
       }
-      return HttpResponse.json(personalInfo());
+      return HttpResponse.json(revealedPersonalInfo());
     }),
   );
   return { revealBodies };
@@ -268,6 +275,61 @@ describe("PersonalInfoCard reveal", () => {
     expect(await screen.findByText(PLAIN_PHONE)).toBeInTheDocument();
     expect(screen.getByText("1990-05-17")).toBeInTheDocument();
     expect(screen.getByText("An Nguyễn")).toBeInTheDocument();
+    expect(screen.getByTestId("pii-revealed-login")).toHaveTextContent(PLAIN_LOGIN);
+  });
+
+  it("can reveal only the login (PLI-FR-12), kept out of caches and dropped on unmount", async () => {
+    const { revealBodies } = setup();
+    const user = userEvent.setup();
+    const { router, queryClient } = renderApp(`/customers/${C.id}`);
+    const dialog = await openReveal(user);
+    await user.selectOptions(within(dialog).getByLabelText("Reason"), "identity_verification");
+    await user.click(within(dialog).getByLabelText("Login (email or phone)"));
+    await user.click(within(dialog).getByRole("button", { name: "Reveal" }));
+
+    await waitFor(() =>
+      expect(revealBodies).toEqual([{ reason_code: "identity_verification", fields: ["login"] }]),
+    );
+    expect(await screen.findByTestId("pii-revealed-login")).toHaveTextContent(PLAIN_LOGIN);
+    expect(screen.getByText("Login (email or phone)").closest("div")).toHaveTextContent(
+      `Email${PLAIN_LOGIN}`,
+    );
+    // Personal info not requested → still masked; the masked login stays on the account card.
+    expect(screen.getByText("+84*******567")).toBeInTheDocument();
+    expect(screen.queryByText(PLAIN_PHONE)).toBeNull();
+    expect(cacheDump(queryClient)).not.toContain(PLAIN_LOGIN);
+    expect(storageDump()).not.toContain(PLAIN_LOGIN);
+
+    await user.click(screen.getByRole("button", { name: "Hide" }));
+    expect(screen.queryByText(PLAIN_LOGIN)).toBeNull();
+
+    await user.click(await screen.findByRole("button", { name: "Reveal" }));
+    const again = screen.getByRole("dialog", { name: "Reveal personal information?" });
+    await user.selectOptions(within(again).getByLabelText("Reason"), "identity_verification");
+    await user.click(within(again).getByLabelText("Login (email or phone)"));
+    await user.click(within(again).getByRole("button", { name: "Reveal" }));
+    expect(await screen.findByText(PLAIN_LOGIN)).toBeInTheDocument();
+
+    await act(() => router.navigate("/customers"));
+    await act(() => router.navigate(`/customers/${C.id}`));
+    expect(await screen.findByText("+84*******567")).toBeInTheDocument();
+    expect(screen.queryByText(PLAIN_LOGIN)).toBeNull();
+    expect(screen.queryByTestId("pii-revealed-login")).toBeNull();
+    expect(cacheDump(queryClient)).not.toContain(PLAIN_LOGIN);
+  });
+
+  it("does not offer the login when the customer has none readable", async () => {
+    setup();
+    server.use(
+      http.get(`${API}/admin/v1/customers/:id`, () =>
+        HttpResponse.json(customer(7, { login: null, login_unavailable: true })),
+      ),
+    );
+    const user = userEvent.setup();
+    renderApp(`/customers/${C.id}`);
+    const dialog = await openReveal(user);
+    expect(within(dialog).queryByLabelText("Login (email or phone)")).toBeNull();
+    expect(within(dialog).getByLabelText("Phone number")).toBeInTheDocument();
   });
 
   it("hides revealed values automatically after 60 seconds", async () => {
@@ -303,7 +365,7 @@ describe("PersonalInfoCard reveal", () => {
     expect(await screen.findByText(PLAIN_PHONE)).toBeInTheDocument();
 
     await act(() => router.navigate("/customers"));
-    expect(await screen.findByText(C.email)).toBeInTheDocument();
+    expect(await screen.findByText(C.display_name ?? "")).toBeInTheDocument();
     expect(screen.queryByText(PLAIN_PHONE)).toBeNull();
 
     await act(() => router.navigate(`/customers/${C.id}`));

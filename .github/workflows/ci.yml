@@ -1,0 +1,120 @@
+# CI runs the same commands developers run locally (team memory). Cheapest
+# gates first; the stack job only after every unit job is green.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Generated code is committed: regenerate and fail on any drift.
+  generated:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: services/identity-service/go.mod
+          cache-dependency-path: services/identity-service/go.sum
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: apps/admin-web/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: apps/admin-web/pnpm-lock.yaml
+      - run: make -C services/identity-service generate
+      - run: pnpm --dir apps/admin-web install --frozen-lockfile && pnpm --dir apps/admin-web generate:api
+      - run: git diff --exit-code
+
+  go:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: services/identity-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: services/identity-service/go.mod
+          cache-dependency-path: services/identity-service/go.sum
+      - run: test -z "$(gofmt -l .)"
+      - run: make vet
+      - run: make test
+      - run: make build
+
+  admin-web:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/admin-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: apps/admin-web/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: apps/admin-web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test --run
+      - run: pnpm build
+
+  mobile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: main
+          flutter-version: 3.49.0-1.0.pre-218 # pinned to the version the team develops with
+          cache: true
+      - run: flutter pub get --enforce-lockfile
+      - run: dart format --output=none --set-exit-if-changed lib test
+      - run: flutter analyze
+      - run: flutter test
+
+  # Full stack: Postgres, Ory, OpenBao, Mailpit, identity-service from this
+  # commit, with .env.example (local-only values, no secrets).
+  stack:
+    needs: [generated, go, admin-web, mobile]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: services/identity-service/go.mod
+          cache-dependency-path: services/identity-service/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: make up
+      - run: make bao-token
+      - run: make login-migrate
+      - run: make -C services/identity-service test-integration
+      - run: node scripts/smoke.mjs
+      - if: failure()
+        run: docker compose --env-file deploy/compose/.env -f deploy/compose/docker-compose.yml --profile app logs --no-color --tail=300 identity-service kratos
+      - if: always()
+        run: make reset

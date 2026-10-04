@@ -4,7 +4,8 @@
 #   init.sh          initialise (first run), unseal, configure transit keys and
 #                    policies, and issue the identity-service token. Idempotent;
 #                    runs on every `make up` so a restarted server is unsealed.
-#   init.sh rotate   rotate the KEK with a short-lived operator token.
+#   init.sh rotate   rotate the PII KEK and the login KEK with a short-lived
+#                    operator token (the login pseudonym key is never rotated).
 #
 # LOCAL ONLY: the unseal key and root token are kept on the `openbao-keys`
 # volume so the stack can restart unattended. Production uses auto-unseal and
@@ -47,6 +48,8 @@ if [ "${1:-}" = "rotate" ]; then
   OP_TOKEN="$(bao token create -policy=identity-pii-operator -no-default-policy -ttl=5m -field=token)"
   BAO_TOKEN="$OP_TOKEN" bao write -f transit/keys/identity-pii-kek/rotate >/dev/null
   BAO_TOKEN="$OP_TOKEN" bao read -field=latest_version transit/keys/identity-pii-kek | sed 's/^/kek latest_version: /'
+  BAO_TOKEN="$OP_TOKEN" bao write -f transit/keys/identity-login-kek/rotate >/dev/null
+  BAO_TOKEN="$OP_TOKEN" bao read -field=latest_version transit/keys/identity-login-kek | sed 's/^/login kek latest_version: /'
   bao token revoke "$OP_TOKEN" >/dev/null
   exit 0
 fi
@@ -58,6 +61,19 @@ bao read transit/keys/identity-pii-kek >/dev/null 2>&1 ||
 # The index key is never rotated automatically: lookups pin key_version=1.
 bao read transit/keys/identity-pii-bidx >/dev/null 2>&1 ||
   bao write transit/keys/identity-pii-bidx type=hmac key_size=32 exportable=false allow_plaintext_backup=false auto_rotate_period=0 >/dev/null
+
+# Login identifiers (ADR-0013): pseudonym HMAC key (pinned version 1, never
+# rotated in place: every Kratos login_id depends on it) and the key that
+# encrypts the login identifier vault.
+bao read transit/keys/identity-login-pseudonym >/dev/null 2>&1 ||
+  bao write transit/keys/identity-login-pseudonym type=hmac key_size=32 exportable=false allow_plaintext_backup=false auto_rotate_period=0 >/dev/null
+bao read transit/keys/identity-login-kek >/dev/null 2>&1 ||
+  bao write transit/keys/identity-login-kek type=aes256-gcm96 exportable=false allow_plaintext_backup=false >/dev/null
+# Never deletable (losing the pseudonym key locks every customer out); set
+# explicitly instead of relying on the default.
+for k in identity-login-pseudonym identity-login-kek; do
+  bao write "transit/keys/$k/config" deletion_allowed=false >/dev/null
+done
 
 bao policy write identity-service /policies/identity-service.hcl >/dev/null
 bao policy write identity-pii-operator /policies/identity-pii-operator.hcl >/dev/null

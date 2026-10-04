@@ -57,7 +57,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get haveAccount => 'Already have an account? Sign in';
 
   @override
-  String get verifyEmailTitle => 'Verify your email';
+  String get verifyEmailTitle => 'Verify your account';
 
   @override
   String verifyEmailBody(String email) {
@@ -81,10 +81,10 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get recoveryEmailBody =>
-      'Enter your account email. If it exists we will send a recovery code.';
+      'Enter your account email or phone number. If an account exists we will send a recovery code.';
 
   @override
-  String get recoveryCodeBody => 'Enter the recovery code we emailed you.';
+  String get recoveryCodeBody => 'Enter the recovery code we sent you.';
 
   @override
   String get recoveryCode => 'Recovery code';
@@ -156,7 +156,8 @@ class AppLocalizationsEn extends AppLocalizations {
       'For your security, sign in again before changing your password.';
 
   @override
-  String get emailNotVerified => 'Verify your email address to continue.';
+  String get emailNotVerified =>
+      'Verify your email or phone number to continue.';
 
   @override
   String get recoverySessionUnavailable =>
@@ -186,27 +187,29 @@ class AppLocalizationsEn extends AppLocalizations {
       'If an account exists for this address, we sent a recovery code to it.';
 
   @override
-  String get kratos1080002 => 'Your email address is verified.';
+  String get kratos1080002 => 'Your email or phone number is verified.';
 
   @override
-  String get kratos1080003 =>
-      'We sent a verification code to your email address.';
+  String get kratos1080003 => 'We sent you a verification code.';
 
   @override
   String get kratos4000002 => 'This field is required.';
 
   @override
-  String get kratos4000006 => 'The email or password is incorrect.';
+  String get kratos4000006 =>
+      'The email/phone number or password is incorrect.';
 
   @override
-  String get kratos4000007 => 'An account with this email already exists.';
+  String get kratos4000007 =>
+      'An account with this email or phone number already exists.';
 
   @override
   String get kratos4000010 =>
-      'This account is not active yet. Did you verify your email address?';
+      'This account is not active yet. Did you verify your email or phone number?';
 
   @override
-  String get kratos4000031 => 'The password is too similar to your email.';
+  String get kratos4000031 =>
+      'The password is too similar to your sign-in details.';
 
   @override
   String kratos4000032(String minLength) {
@@ -337,4 +340,78 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get dateOfBirthOutOfRange =>
       'You must be between 13 and 120 years old.';
+
+  @override
+  String verifyPhoneBody(String phone) {
+    return 'Enter the code we sent by SMS to $phone.';
+  }
+
+  @override
+  String get verifyBodyGeneric => 'Enter the code we sent you.';
+
+  @override
+  String get loginTypeLabel => 'Sign in with';
+
+  @override
+  String get loginTypeEmail => 'Email';
+
+  @override
+  String get loginTypePhone => 'Phone';
+
+  @override
+  String get loginPhoneHint => '0901234567 or +84901234567';
+
+  @override
+  String get loginInvalidEmail => 'Enter a valid email address.';
+
+  @override
+  String get loginInvalidPhone =>
+      'Enter a valid phone number, e.g. 0901234567 or +84901234567.';
+
+  @override
+  String get loginUnsupportedCountry =>
+      'Phone numbers from this country are not supported yet.';
+
+  @override
+  String get rateLimited =>
+      'Too many attempts. Please wait a moment and try again.';
+
+  @override
+  String rateLimitedRetryAfter(int seconds) {
+    return 'Too many attempts. Please try again in $seconds seconds.';
+  }
+
+  @override
+  String rateLimitedRetryAfterMinutes(int minutes) {
+    String _temp0 = intl.Intl.pluralLogic(
+      minutes,
+      locale: localeName,
+      other: '$minutes minutes',
+      one: '1 minute',
+    );
+    return 'Too many attempts. Please try again in $_temp0.';
+  }
+
+  @override
+  String rateLimitedRetryAfterHours(int hours) {
+    String _temp0 = intl.Intl.pluralLogic(
+      hours,
+      locale: localeName,
+      other: '$hours hours',
+      one: '1 hour',
+    );
+    return 'Too many attempts. Please try again in $_temp0.';
+  }
+
+  @override
+  String get passwordHint =>
+      'Don\'t use your email address or phone number in your password.';
+
+  @override
+  String get kratos4049001 =>
+      'This app version is out of date. Please update the app and try again.';
+
+  @override
+  String get kratos4049002 =>
+      'We couldn\'t confirm your email or phone number. Please try again.';
 }

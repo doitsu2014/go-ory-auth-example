@@ -35,7 +35,9 @@ type RewrapResult struct {
 type KeyRotationService struct {
 	Keys        KeyManager
 	SubjectKeys SubjectKeyRepo
-	Log         *slog.Logger
+	// Logins is the login identifier vault (erasure ledger, ADR-0013).
+	Logins LoginIdentifierRepo
+	Log    *slog.Logger
 }
 
 // Rewrap re-wraps every subject key with the newest KEK version: unwrap and
@@ -117,6 +119,19 @@ func (s *KeyRotationService) ReapplyErasures(ctx context.Context) (int64, error)
 	n, err := s.SubjectKeys.DeleteErased(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("reapply erasures: %w", err)
+	}
+	return n, nil
+}
+
+// ReapplyLoginErasures deletes the logins of identities with a
+// customer.login.erased event (run after any restore, with ReapplyErasures).
+func (s *KeyRotationService) ReapplyLoginErasures(ctx context.Context) (int64, error) {
+	if s.Logins == nil {
+		return 0, nil
+	}
+	n, err := s.Logins.DeleteErased(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("reapply login erasures: %w", err)
 	}
 	return n, nil
 }

@@ -5,8 +5,12 @@ COMPOSE := docker compose --env-file deploy/compose/.env -f deploy/compose/docke
 dev: ## Single entrypoint: build, start, seed the first admin, print URLs (same as ./dev up)
 	./dev up
 
-env: ## Create deploy/compose/.env from the example (local values only)
+env: ## Create deploy/compose/.env from the example, or add keys it lacks (local values only)
 	@test -f deploy/compose/.env || cp deploy/compose/.env.example deploy/compose/.env
+	@test -z "$$(tail -c1 deploy/compose/.env)" || echo >> deploy/compose/.env
+	@grep -E '^[A-Z0-9_]+=' deploy/compose/.env.example | while IFS== read -r k v; do \
+		grep -q "^$$k=" deploy/compose/.env || { echo "$$k=$$v" >> deploy/compose/.env; echo "added $$k to deploy/compose/.env"; }; \
+	done
 
 infra-up: env ## Start Postgres, Kratos, Keto, Hydra, Mailpit, OpenBao (initialised + unsealed)
 	$(COMPOSE) up -d --wait postgres mailpit kratos keto hydra openbao
@@ -49,6 +53,16 @@ kek-rotate: ## Rotate the PII key-encryption key (operator token, short-lived)
 
 keys-rewrap: ## Re-wrap every customer data key with the newest KEK version
 	$(COMPOSE) --profile app exec identity-service /identity-service keys rewrap
+
+login-migrate: ## Replace legacy customer email traits with pseudonymous logins (ADR-0013; idempotent)
+	$(COMPOSE) --profile app exec identity-service /identity-service pii migrate-kratos-logins
+
+login-purge: ## Delete unclaimed login identifiers and logins of deleted identities (schedule daily)
+	$(COMPOSE) --profile app exec identity-service /identity-service pii purge-unbound-logins
+
+kratos-scrub: ## Delete old Kratos courier messages (PHASE=complete also drops legacy customer messages) and expired flows
+	$(COMPOSE) exec -T postgres psql -U kratos -d kratos -v keep_days=$${KEEP_DAYS:-7} -v phase=$${PHASE:-transition} -f - < deploy/ory/kratos/scrub/scrub-courier.sql
+	$(COMPOSE) run --rm -T kratos-migrate cleanup sql -e --keep-last $${KEEP_LAST:-24h} --database.cleanup.sleep.tables $${CLEANUP_SLEEP:-5s}
 
 smoke: ## End-to-end smoke test against the running stack
 	node scripts/smoke.mjs

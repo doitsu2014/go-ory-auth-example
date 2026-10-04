@@ -4,26 +4,44 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/misc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_ory_auth_mobile/app/providers.dart';
+import 'package:go_ory_auth_mobile/core/identity/login_input.dart';
 import 'package:go_ory_auth_mobile/core/kratos/kratos_models.dart';
 import 'package:go_ory_auth_mobile/core/network/app_failure.dart';
 import 'package:go_ory_auth_mobile/features/auth/data/auth_repository.dart';
 import 'package:go_ory_auth_mobile/features/auth/presentation/auth_controller.dart';
 import 'package:go_ory_auth_mobile/features/auth/presentation/forgot_password_screen.dart';
 import 'package:go_ory_auth_mobile/features/auth/presentation/verify_email_screen.dart';
+import 'package:go_ory_auth_mobile/features/profile/domain/me.dart';
 import 'package:mocktail/mocktail.dart';
 
 import '../../helpers/helpers.dart';
 
+Me _me(LoginType type, String value) => Me(
+  id: '5d9c2c61-6a1e-4b8f-9b8a-2f9d6f0c1e11',
+  login: LoginContact(type: type, value: value),
+  emailVerified: false,
+  locale: 'vi-VN',
+  createdAt: DateTime.utc(2026, 10, 3),
+);
+
 void main() {
+  setUpAll(registerLoginFallbacks);
+
   group('VerifyEmailScreen', () {
     late MockAuthRepository repo;
+    late MockProfileRepository profile;
+    const sessionLogin = pseudonym;
 
     setUp(() {
       repo = MockAuthRepository();
+      profile = MockProfileRepository();
+      when(profile.getMe)
+          .thenAnswer((_) async => _me(LoginType.email, 'an@example.com'));
     });
 
     List<Override> overrides({String? flowId}) => [
       authRepositoryProvider.overrideWithValue(repo),
+      profileRepositoryProvider.overrideWithValue(profile),
       authControllerProvider.overrideWith(
         () => FixedAuth(
           Authenticated(
@@ -35,22 +53,88 @@ void main() {
       ),
     ];
 
-    testWidgets('idle with continue_with flow: no extra flow, email shown', (
+    testWidgets(
+      'idle with continue_with flow: no extra flow, contact from /v1/me shown',
+      (tester) async {
+        await pumpScreen(
+          tester,
+          const VerifyEmailScreen(),
+          overrides: overrides(flowId: 'vf-1'),
+        );
+        await tester.pumpAndSettle();
+        verifyNever(
+          () => repo.startVerification(loginId: any(named: 'loginId')),
+        );
+        expect(
+          find.text('Enter the code we emailed to an@example.com.'),
+          findsOneWidget,
+        );
+        // The pseudonym is never displayed.
+        expect(find.textContaining('login.invalid'), findsNothing);
+      },
+    );
+
+    testWidgets('phone login: SMS wording with the phone from /v1/me', (
       tester,
     ) async {
+      when(profile.getMe)
+          .thenAnswer((_) async => _me(LoginType.phone, '+84901234567'));
       await pumpScreen(
         tester,
         const VerifyEmailScreen(),
         overrides: overrides(flowId: 'vf-1'),
       );
-      verifyNever(() => repo.startVerification(any()));
-      expect(find.textContaining('an@example.com'), findsOneWidget);
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Enter the code we sent by SMS to +84901234567.'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('login.invalid'), findsNothing);
+    });
+
+    testWidgets('/v1/me unavailable: generic text, never the pseudonym', (
+      tester,
+    ) async {
+      when(profile.getMe).thenThrow(const NetworkFailure());
+      await pumpScreen(
+        tester,
+        const VerifyEmailScreen(),
+        overrides: overrides(flowId: 'vf-1'),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Enter the code we sent you.'), findsOneWidget);
+      expect(find.textContaining('login.invalid'), findsNothing);
+    });
+
+    testWidgets('session without a login id: Kratos is not called, the '
+        'session is treated as lost', (tester) async {
+      when(repo.forget).thenAnswer((_) async {});
+      await pumpScreen(
+        tester,
+        const VerifyEmailScreen(),
+        overrides: [
+          authRepositoryProvider.overrideWithValue(repo),
+          profileRepositoryProvider.overrideWithValue(profile),
+          authControllerProvider.overrideWith(
+            () => FixedAuth(
+              Authenticated(session(loginId: ''), pendingVerification: true),
+            ),
+          ),
+        ],
+      );
+      await tester.pumpAndSettle();
+      verifyNever(() => repo.startVerification(loginId: any(named: 'loginId')));
+      verify(repo.forget).called(1);
+      expect(
+        authStateOf(tester, find.byType(VerifyEmailScreen)),
+        isA<Unauthenticated>(),
+      );
     });
 
     testWidgets(
       'idle without continue_with: starts a verification flow (sends code)',
       (tester) async {
-        when(() => repo.startVerification('an@example.com')).thenAnswer(
+        when(() => repo.startVerification(loginId: sessionLogin)).thenAnswer(
           (_) async => flowWith(
             id: 'vf-2',
             state: 'sent_email',
@@ -63,11 +147,8 @@ void main() {
           overrides: overrides(),
         );
         await tester.pumpAndSettle();
-        verify(() => repo.startVerification('an@example.com')).called(1);
-        expect(
-          find.text('We sent a verification code to your email address.'),
-          findsOneWidget,
-        );
+        verify(() => repo.startVerification(loginId: sessionLogin)).called(1);
+        expect(find.text('We sent you a verification code.'), findsOneWidget);
       },
     );
 
@@ -78,10 +159,8 @@ void main() {
       when(() => repo.verify(flowId: 'vf-1', code: '000000'))
           .thenAnswer((_) => pending.future);
       when(
-        () => repo.resendVerificationCode(
-          flowId: 'vf-1',
-          email: 'an@example.com',
-        ),
+        () =>
+            repo.resendVerificationCode(flowId: 'vf-1', loginId: sessionLogin),
       ).thenAnswer(
         (_) async => flowWith(
           id: 'vf-1',
@@ -112,15 +191,10 @@ void main() {
       await tester.tap(find.byKey(const Key('verify.resend')));
       await tester.pumpAndSettle();
       verify(
-        () => repo.resendVerificationCode(
-          flowId: 'vf-1',
-          email: 'an@example.com',
-        ),
+        () =>
+            repo.resendVerificationCode(flowId: 'vf-1', loginId: sessionLogin),
       ).called(1);
-      expect(
-        find.text('We sent a verification code to your email address.'),
-        findsOneWidget,
-      );
+      expect(find.text('We sent you a verification code.'), findsOneWidget);
     });
 
     testWidgets('success navigates to profile', (tester) async {
@@ -146,7 +220,6 @@ void main() {
 
     setUp(() {
       repo = MockAuthRepository();
-      when(repo.startRecovery).thenAnswer((_) async => flowWith(id: 'rf-1'));
       when(() => repo.abandonRecovery(any())).thenAnswer((_) async {});
     });
 
@@ -156,16 +229,38 @@ void main() {
         const ForgotPasswordScreen(),
         overrides: authOverrides(repo),
       );
-      verify(repo.startRecovery).called(1);
-      expect(find.byKey(const Key('recovery.email')), findsOneWidget);
+      expect(find.byKey(const Key('recovery.login')), findsOneWidget);
+      verifyNever(() => repo.requestRecoveryCode(login: any(named: 'login')));
+    });
+
+    testWidgets('local format error clears when the field changes', (
+      tester,
+    ) async {
+      await pumpScreen(
+        tester,
+        const ForgotPasswordScreen(),
+        overrides: authOverrides(repo),
+      );
+      await tester.enterText(find.byKey(const Key('recovery.login')), 'nope');
+      await tester.tap(find.byKey(const Key('recovery.send')));
+      await tester.pumpAndSettle();
+      expect(find.text('Enter a valid email address.'), findsOneWidget);
+      verifyNever(() => repo.requestRecoveryCode(login: any(named: 'login')));
+      await tester.enterText(find.byKey(const Key('recovery.login')), 'nope@');
+      await tester.pump();
+      expect(find.text('Enter a valid email address.'), findsNothing);
     });
 
     testWidgets(
       'email -> code (submitting) -> wrong code error -> new password',
       (tester) async {
         when(
-          () =>
-              repo.requestRecoveryCode(flowId: 'rf-1', email: 'an@example.com'),
+          () => repo.requestRecoveryCode(
+            login: const LoginInput(
+              type: LoginType.email,
+              value: 'an@example.com',
+            ),
+          ),
         ).thenAnswer(
           (_) async => flowWith(
             id: 'rf-1',
@@ -198,7 +293,7 @@ void main() {
         );
 
         await tester.enterText(
-          find.byKey(const Key('recovery.email')),
+          find.byKey(const Key('recovery.login')),
           'an@example.com',
         );
         await tester.tap(find.byKey(const Key('recovery.send')));
@@ -247,12 +342,8 @@ void main() {
         settingsFlowId: 'sf-1',
         sessionToken: 'ory_st_priv',
       );
-      when(
-        () => repo.requestRecoveryCode(
-          flowId: 'rf-1',
-          email: any(named: 'email'),
-        ),
-      ).thenAnswer((_) async => flowWith(id: 'rf-1', state: 'sent_email'));
+      when(() => repo.requestRecoveryCode(login: any(named: 'login')))
+          .thenAnswer((_) async => flowWith(id: 'rf-1', state: 'sent_email'));
       when(() => repo.submitRecoveryCode(flowId: 'rf-1', code: '123456'))
           .thenAnswer((_) async => grant);
       when(
@@ -265,7 +356,7 @@ void main() {
         overrides: authOverrides(repo),
       );
       await tester.enterText(
-        find.byKey(const Key('recovery.email')),
+        find.byKey(const Key('recovery.login')),
         'an@example.com',
       );
       await tester.tap(find.byKey(const Key('recovery.send')));
@@ -295,12 +386,8 @@ void main() {
         settingsFlowId: 'sf-1',
         sessionToken: 'ory_st_priv',
       );
-      when(
-        () => repo.requestRecoveryCode(
-          flowId: 'rf-1',
-          email: any(named: 'email'),
-        ),
-      ).thenAnswer((_) async => flowWith(id: 'rf-1', state: 'sent_email'));
+      when(() => repo.requestRecoveryCode(login: any(named: 'login')))
+          .thenAnswer((_) async => flowWith(id: 'rf-1', state: 'sent_email'));
       when(
         () => repo.submitRecoveryCode(
           flowId: 'rf-1',
@@ -314,7 +401,7 @@ void main() {
         overrides: authOverrides(repo),
       );
       await tester.enterText(
-        find.byKey(const Key('recovery.email')),
+        find.byKey(const Key('recovery.login')),
         'an@example.com',
       );
       await tester.tap(find.byKey(const Key('recovery.send')));
@@ -329,12 +416,8 @@ void main() {
     testWidgets('new password field error (breached) from settings flow', (
       tester,
     ) async {
-      when(
-        () => repo.requestRecoveryCode(
-          flowId: 'rf-1',
-          email: any(named: 'email'),
-        ),
-      ).thenAnswer((_) async => flowWith(id: 'rf-1', state: 'sent_email'));
+      when(() => repo.requestRecoveryCode(login: any(named: 'login')))
+          .thenAnswer((_) async => flowWith(id: 'rf-1', state: 'sent_email'));
       when(
         () => repo.submitRecoveryCode(
           flowId: 'rf-1',
@@ -367,7 +450,7 @@ void main() {
         overrides: authOverrides(repo),
       );
       await tester.enterText(
-        find.byKey(const Key('recovery.email')),
+        find.byKey(const Key('recovery.login')),
         'an@example.com',
       );
       await tester.tap(find.byKey(const Key('recovery.send')));
@@ -390,12 +473,8 @@ void main() {
     });
 
     testWidgets('global error: recovery session unavailable', (tester) async {
-      when(
-        () => repo.requestRecoveryCode(
-          flowId: 'rf-1',
-          email: any(named: 'email'),
-        ),
-      ).thenAnswer((_) async => flowWith(id: 'rf-1', state: 'sent_email'));
+      when(() => repo.requestRecoveryCode(login: any(named: 'login')))
+          .thenAnswer((_) async => flowWith(id: 'rf-1', state: 'sent_email'));
       when(
         () => repo.submitRecoveryCode(
           flowId: 'rf-1',
@@ -408,7 +487,7 @@ void main() {
         overrides: authOverrides(repo),
       );
       await tester.enterText(
-        find.byKey(const Key('recovery.email')),
+        find.byKey(const Key('recovery.login')),
         'an@example.com',
       );
       await tester.tap(find.byKey(const Key('recovery.send')));
@@ -417,6 +496,34 @@ void main() {
       await tester.tap(find.byKey(const Key('recovery.submitCode')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('flow.failure')), findsOneWidget);
+    });
+
+    testWidgets('expired recovery flow at the code step: back to the email '
+        'step', (tester) async {
+      when(() => repo.requestRecoveryCode(login: any(named: 'login')))
+          .thenAnswer((_) async => flowWith(id: 'rf-1', state: 'sent_email'));
+      when(
+        () => repo.submitRecoveryCode(
+          flowId: 'rf-1',
+          code: any(named: 'code'),
+        ),
+      ).thenThrow(const FlowExpiredFailure());
+      await pumpScreen(
+        tester,
+        const ForgotPasswordScreen(),
+        overrides: authOverrides(repo),
+      );
+      await tester.enterText(
+        find.byKey(const Key('recovery.login')),
+        'an@example.com',
+      );
+      await tester.tap(find.byKey(const Key('recovery.send')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('recovery.code')), '123456');
+      await tester.tap(find.byKey(const Key('recovery.submitCode')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('recovery.login')), findsOneWidget);
+      expect(find.textContaining('expired'), findsOneWidget);
     });
   });
 

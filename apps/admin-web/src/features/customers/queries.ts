@@ -3,15 +3,16 @@ import { keepPreviousData, queryOptions, useMutation, useQueryClient } from "@ta
 import {
   type CustomerLookupResult,
   type IdentityState,
-  type PersonalInfo,
+  type LoginIdentifier,
   type RevealRequest,
+  type RevealedPersonalInfo,
   api,
   unwrap,
 } from "../../api/client";
 import { auditKeys } from "../audit/queries";
 
+/** List filters. There is deliberately no contact filter: PII never goes in a URL (PLI-FR-11). */
 export interface CustomerListParams {
-  email?: string;
   state?: IdentityState;
   pageToken?: string;
   pageSize?: number;
@@ -36,7 +37,6 @@ export function customerListQuery(p: CustomerListParams) {
         api.GET("/admin/v1/customers", {
           params: {
             query: {
-              email: p.email || undefined,
               state: p.state,
               page_size: p.pageSize ?? PAGE_SIZE,
               page_token: p.pageToken,
@@ -69,7 +69,7 @@ export function maskedPersonalInfoQuery(id: string) {
  * state (data + variables) in its caches, and plaintext PII must live only in
  * the calling component's state.
  */
-export function revealPersonalInfo(id: string, body: RevealRequest): Promise<PersonalInfo> {
+export function revealPersonalInfo(id: string, body: RevealRequest): Promise<RevealedPersonalInfo> {
   return unwrap(
     api.POST("/admin/v1/customers/{id}/personal-info/reveal", {
       params: { path: { id } },
@@ -85,6 +85,14 @@ export function revealPersonalInfo(id: string, body: RevealRequest): Promise<Per
  */
 export function lookupCustomersByPhone(phoneNumber: string): Promise<CustomerLookupResult> {
   return unwrap(api.POST("/admin/v1/customers/lookup", { body: { phone_number: phoneNumber } }));
+}
+
+/**
+ * POST /admin/v1/customers/lookup with the login identifier (exact match,
+ * PLI-FR-11). Same rules as the phone lookup: body only, never cached.
+ */
+export function lookupCustomersByLogin(login: LoginIdentifier): Promise<CustomerLookupResult> {
+  return unwrap(api.POST("/admin/v1/customers/lookup", { body: { login } }));
 }
 
 function useInvalidateCustomer(id: string) {

@@ -124,14 +124,18 @@ or Kustomize for identity-service. Migrations run as pre-upgrade Jobs.
 | `SECRETS_COOKIE`, `SECRETS_CIPHER`, `SECRETS_DEFAULT` | Kratos | List-based; prepend new, keep old until sessions expire |
 | `DSN` per component | Kratos, Keto, identity-service | Managed DB rotation |
 | Webhook API key | Kratos (sender) + identity-service (`KRATOS_WEBHOOK_API_KEY`, receiver) | Dual-key window |
-| `COURIER_SMTP_CONNECTION_URI` | Kratos courier | Provider |
-| `SMTP_URL` | identity-service mailer (invitations) | Provider |
+| Courier API key | Kratos http courier (sender, rendered into `kratos.yml`) + identity-service (`KRATOS_COURIER_API_KEY`); distinct from the webhook key | Dual-key window |
+| `COURIER_DEDUPE_SECRET` | identity-service (courier de-duplication HMAC) | Any time (at most one duplicate message per in-flight code) |
+| `SMTP_URL` | identity-service mailer (invitations and every Kratos message, ADR-0013) | Provider |
+| `SMS_HTTP_TOKEN` | identity-service SMS adapter (`SMS_PROVIDER=http`) | Provider |
+| OpenBao keys `identity-login-pseudonym`, `identity-login-kek` | identity-service (via its Transit token) | HMAC (lookup) key: never rotated in place; re-key rewrites `login_identifier.lookup_key` only (ADR-0014). Login KEK: `make kek-rotate` + `make keys-rewrap` |
 
 Rules for supplying values to Kratos and Keto:
 
 - Ory env overrides map **directly from the config path, with no product
-  prefix**: `secrets.cookie` → `SECRETS_COOKIE`, `dsn` → `DSN`, and
-  `courier.smtp.connection_uri` → `COURIER_SMTP_CONNECTION_URI`.
+  prefix**: `secrets.cookie` → `SECRETS_COOKIE`, `dsn` → `DSN`. Kratos
+  sends no mail itself: `courier.delivery_strategy: http` posts every message
+  to identity-service.
   `KRATOS_SECRETS_*` would be silently ignored.
 - Kratos YAML does **not** expand `${VAR}`. Never write `${…}` in `kratos.yml`,
   because it becomes the literal value. Inject the webhook key either with its
@@ -153,6 +157,14 @@ All configuration is environment-driven (12-factor). Local values live in
 2. DB migrations (Kratos, Keto, identity) run first as Jobs; identity migrations are expand/contract.
 3. Rolling deploy; `/readyz` gates traffic.
 4. Mobile releases are decoupled — the API stays backwards compatible within `v1`.
+   Exceptions: the pseudonymous-login rollout (ADR-0013) needs the app that
+   resolves identifiers first, enforced as a minimum version before step 4
+   of its runbook (08 §8.12). The login proxy (ADR-0014) removes
+   `POST /v1/auth/identifiers`, so the app that signs in through
+   `POST /v1/auth/login` must ship with it (forced update).
+5. Scheduled jobs: `identity-service pii purge-unbound-logins` (daily),
+   `make kratos-scrub` (courier retention, daily) and `kratos cleanup sql
+   --keep-last 24h` (expired flows).
 
 ## 5.5 Switching to Ory Network (optional)
 

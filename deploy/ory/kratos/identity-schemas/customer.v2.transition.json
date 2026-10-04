@@ -1,0 +1,56 @@
+{
+  "$id": "https://schemas.go-ory-auth-example.local/customer.v2.transition.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Customer (v2, migration window)",
+  "description": "ADR-0013 phases 1-2: a customer has either the pseudonymous login_id (new) or the legacy plaintext email (not yet migrated by `identity-service pii migrate-kratos-logins`). The pre-registration webhook rejects new registrations with email. Replace with customer.v2.json once LOGIN_MIGRATION_PHASE=complete.",
+  "type": "object",
+  "properties": {
+    "traits": {
+      "type": "object",
+      "properties": {
+        "login_id": {
+          "type": "string",
+          "format": "email",
+          "pattern": "^[a-z2-7]{52}@login\\.invalid$",
+          "maxLength": 66,
+          "title": "Login",
+          "ory.sh/kratos": {
+            "credentials": {
+              "password": {
+                "identifier": true
+              }
+            },
+            "verification": {
+              "via": "email"
+            },
+            "recovery": {
+              "via": "email"
+            }
+          }
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 320,
+          "title": "Email",
+          "ory.sh/kratos": {
+            "credentials": {
+              "password": {
+                "identifier": true
+              }
+            },
+            "verification": {
+              "via": "email"
+            },
+            "recovery": {
+              "via": "email"
+            }
+          }
+        }
+      },
+      "minProperties": 1,
+      "maxProperties": 1,
+      "additionalProperties": false
+    }
+  }
+}

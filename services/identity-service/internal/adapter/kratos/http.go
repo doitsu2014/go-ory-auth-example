@@ -6,9 +6,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -84,7 +86,7 @@ func (c client) do(ctx context.Context, method, path string, header http.Header,
 		}
 		resp, err := c.http.Do(req)
 		if err != nil {
-			lastErr = fmt.Errorf("%w: kratos %s %s: %v", app.ErrDependencyUnavailable, method, redactPath(path), err)
+			lastErr = fmt.Errorf("%w: kratos %s %s: %v", app.ErrDependencyUnavailable, method, redactPath(path), transportCause(err))
 			if ctx.Err() != nil {
 				break
 			}
@@ -103,6 +105,20 @@ func (c client) do(ctx context.Context, method, path string, header http.Header,
 		return response{status: resp.StatusCode, header: resp.Header, body: b}, nil
 	}
 	return response{}, lastErr
+}
+
+// transportCause strips the *url.Error wrapper, whose text carries the full
+// request URL including the query (e.g. credentials_identifier=<address>,
+// SEC-C01). Only the underlying cause (dial error, timeout) is kept.
+func transportCause(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		if ue.Timeout() {
+			return errors.New("timeout")
+		}
+		return ue.Err
+	}
+	return err
 }
 
 func redactPath(p string) string {

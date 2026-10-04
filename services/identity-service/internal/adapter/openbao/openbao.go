@@ -5,6 +5,9 @@
 //   - POST /v1/transit/encrypt/<kek>            wrap a DEK (associated_data = subject)
 //   - POST /v1/transit/decrypt/<kek>            unwrap a DEK (same associated_data)
 //   - POST /v1/transit/hmac/<bidx>/sha2-256     blind index, key_version pinned to 1
+//   - POST /v1/transit/hmac/<login-hmac>/sha2-256  login pseudonym, key_version pinned to 1
+//   - POST /v1/transit/encrypt/<login-kek>      seal a login identifier (associated_data)
+//   - POST /v1/transit/decrypt/<login-kek>      open login identifiers (batch_input)
 //   - POST /v1/auth/token/renew-self            periodic token renewal
 //
 // The token comes from a file that the init job may replace; it is re-read
@@ -34,6 +37,7 @@ import (
 	"time"
 
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/app"
+	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/login"
 )
 
 // Defaults (technical spec §3).
@@ -43,7 +47,16 @@ const (
 	DefaultBidxKeyName = "identity-pii-bidx"
 	// BidxKeyVersion is pinned: the index key is never rotated in v1
 	// (rotation would need a re-index job).
-	BidxKeyVersion   = 1
+	BidxKeyVersion = 1
+	// DefaultLoginHMACKeyName and DefaultLoginKEKName are the login
+	// pseudonym and login encryption keys (PLI DD-01, DD-03).
+	DefaultLoginHMACKeyName = "identity-login-pseudonym"
+	DefaultLoginKEKName     = "identity-login-kek"
+	// LoginHMACKeyVersion is pinned: every Kratos login_id depends on it.
+	// Rotation is the re-key procedure (A7), never an in-place rotate.
+	LoginHMACKeyVersion = 1
+	// maxBatch bounds one transit/decrypt batch.
+	maxBatch         = 100
 	maxResponseBody  = 1 << 20
 	maxTokenFileSize = 4 << 10
 )
@@ -60,7 +73,10 @@ type Config struct {
 	TokenFile   string
 	KEKName     string
 	BidxKeyName string
-	Timeout     time.Duration
+	// LoginHMACKeyName and LoginKEKName default to the constants above.
+	LoginHMACKeyName string
+	LoginKEKName     string
+	Timeout          time.Duration
 	// CAFile optionally holds a PEM CA bundle replacing the system roots.
 	CAFile string
 	HTTP   *http.Client
@@ -73,6 +89,8 @@ type Client struct {
 	tokenFile string
 	kek       string
 	bidx      string
+	loginHMAC string
+	loginKEK  string
 	timeout   time.Duration
 	http      *http.Client
 	log       *slog.Logger
@@ -83,7 +101,10 @@ type Client struct {
 	tokSize int64
 }
 
-var _ app.KeyManager = (*Client)(nil)
+var (
+	_ app.KeyManager = (*Client)(nil)
+	_ app.LoginKeys  = (*Client)(nil)
+)
 
 // New validates the configuration. The token file is read lazily.
 func New(cfg Config) (*Client, error) {
@@ -93,8 +114,21 @@ func New(cfg Config) (*Client, error) {
 	if cfg.BidxKeyName == "" {
 		cfg.BidxKeyName = DefaultBidxKeyName
 	}
-	if !keyNameRe.MatchString(cfg.KEKName) || !keyNameRe.MatchString(cfg.BidxKeyName) {
-		return nil, errors.New("openbao: invalid key name")
+	if cfg.LoginHMACKeyName == "" {
+		cfg.LoginHMACKeyName = DefaultLoginHMACKeyName
+	}
+	if cfg.LoginKEKName == "" {
+		cfg.LoginKEKName = DefaultLoginKEKName
+	}
+	names := map[string]bool{}
+	for _, n := range []string{cfg.KEKName, cfg.BidxKeyName, cfg.LoginHMACKeyName, cfg.LoginKEKName} {
+		if !keyNameRe.MatchString(n) {
+			return nil, errors.New("openbao: invalid key name")
+		}
+		names[n] = true
+	}
+	if len(names) != 4 {
+		return nil, errors.New("openbao: key names must be distinct")
 	}
 	if cfg.Addr == "" || cfg.TokenFile == "" {
 		return nil, errors.New("openbao: address and token file are required")
@@ -128,6 +162,7 @@ func New(cfg Config) (*Client, error) {
 	}
 	return &Client{
 		addr: strings.TrimRight(cfg.Addr, "/"), tokenFile: cfg.TokenFile, kek: cfg.KEKName, bidx: cfg.BidxKeyName,
+		loginHMAC: cfg.LoginHMACKeyName, loginKEK: cfg.LoginKEKName,
 		timeout: cfg.Timeout, http: cfg.HTTP, log: cfg.Log,
 	}, nil
 }
@@ -179,21 +214,23 @@ type statusError struct {
 func (e *statusError) Error() string { return fmt.Sprintf("openbao %s: status %d", e.op, e.status) }
 func (e *statusError) Unwrap() error { return errBadStatus }
 
-// call POSTs body to /v1/<path> and decodes the JSON response into out.
-func (c *Client) call(ctx context.Context, op, path string, body, out any) error {
+// do POSTs body to /v1/<path> and returns the status and body of a response
+// that is not a transport-level, permission, throttling or server failure
+// (those are app.ErrDependencyUnavailable). The caller clears the body.
+func (c *Client) do(ctx context.Context, op, path string, body any) (int, []byte, error) {
 	tok, err := c.currentToken(op)
 	if err != nil {
-		return err
+		return 0, nil, err
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
-		return fmt.Errorf("openbao %s: encode request", op)
+		return 0, nil, fmt.Errorf("openbao %s: encode request", op)
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.addr+"/v1/"+path, bytes.NewReader(payload))
 	if err != nil {
-		return fmt.Errorf("openbao %s: build request", op)
+		return 0, nil, fmt.Errorf("openbao %s: build request", op)
 	}
 	req.Header.Set("X-Vault-Token", tok)
 	req.Header.Set("Content-Type", "application/json")
@@ -201,30 +238,44 @@ func (c *Client) call(ctx context.Context, op, path string, body, out any) error
 	resp, err := c.http.Do(req)
 	clear(payload)
 	if err != nil {
-		return unavailable(op, "transport: %v", err)
+		return 0, nil, unavailable(op, "transport: %v", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	b, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody))
 	if err != nil {
-		return unavailable(op, "read response")
+		return 0, nil, unavailable(op, "read response")
+	}
+	switch {
+	case resp.StatusCode == http.StatusForbidden:
+		clear(b)
+		c.forgetToken()
+		return 0, nil, unavailable(op, "permission denied (status 403)")
+	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
+		clear(b)
+		return 0, nil, unavailable(op, "status %d", resp.StatusCode)
+	case resp.StatusCode >= 300 && resp.StatusCode < 400:
+		clear(b)
+		return 0, nil, unavailable(op, "unexpected redirect (status %d)", resp.StatusCode)
+	}
+	return resp.StatusCode, b, nil
+}
+
+// call POSTs body to /v1/<path> and decodes the JSON response into out.
+func (c *Client) call(ctx context.Context, op, path string, body, out any) error {
+	status, b, err := c.do(ctx, op, path, body)
+	if err != nil {
+		return err
 	}
 	defer clear(b)
 	switch {
-	case resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent:
-	case resp.StatusCode == http.StatusForbidden:
-		c.forgetToken()
-		return unavailable(op, "permission denied (status 403)")
-	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
-		return unavailable(op, "status %d", resp.StatusCode)
-	case resp.StatusCode >= 300 && resp.StatusCode < 400:
-		return unavailable(op, "unexpected redirect (status %d)", resp.StatusCode)
-	case resp.StatusCode == http.StatusBadRequest:
-		if bytes.Contains(b, []byte("message authentication failed")) || bytes.Contains(b, []byte("invalid ciphertext")) {
-			return &statusError{op: op, status: resp.StatusCode, authFailed: true}
+	case status == http.StatusOK || status == http.StatusNoContent:
+	case status == http.StatusBadRequest:
+		if isAuthFailure(b) {
+			return &statusError{op: op, status: status, authFailed: true}
 		}
 		return unavailable(op, "status 400")
 	default:
-		return &statusError{op: op, status: resp.StatusCode}
+		return &statusError{op: op, status: status}
 	}
 	if out == nil || len(b) == 0 {
 		return nil
@@ -233,6 +284,10 @@ func (c *Client) call(ctx context.Context, op, path string, body, out any) error
 		return fmt.Errorf("openbao %s: decode response", op)
 	}
 	return nil
+}
+
+func isAuthFailure(b []byte) bool {
+	return bytes.Contains(b, []byte("message authentication failed")) || bytes.Contains(b, []byte("invalid ciphertext"))
 }
 
 func parseVersioned(s string) (int, string, bool) {
@@ -362,4 +417,114 @@ func (c *Client) RenewLoop(ctx context.Context) {
 		case <-t.C:
 		}
 	}
+}
+
+// LookupKey implements app.LoginKeys (transit/hmac sha2-256 on the login
+// HMAC key, key_version pinned to 1).
+func (c *Client) LookupKey(ctx context.Context, input []byte) (login.LookupKey, error) {
+	var out struct {
+		Data struct {
+			HMAC string `json:"hmac"`
+		} `json:"data"`
+	}
+	err := c.call(ctx, "login hmac", "transit/hmac/"+c.loginHMAC+"/sha2-256", map[string]any{
+		"input": base64.StdEncoding.EncodeToString(input), "key_version": LoginHMACKeyVersion,
+	}, &out)
+	if err != nil {
+		return login.LookupKey{}, err
+	}
+	v, b64, ok := parseVersioned(out.Data.HMAC)
+	sum, derr := base64.StdEncoding.DecodeString(b64)
+	if !ok || v != LoginHMACKeyVersion || derr != nil || len(sum) != login.PseudonymLen {
+		return login.LookupKey{}, errors.New("openbao login hmac: malformed response")
+	}
+	var k login.LookupKey
+	copy(k[:], sum)
+	return k, nil
+}
+
+// SealLogin implements app.LoginKeys (transit/encrypt with associated_data).
+func (c *Client) SealLogin(ctx context.Context, ad, plaintext []byte) (string, int, error) {
+	var out struct {
+		Data struct {
+			Ciphertext string `json:"ciphertext"`
+		} `json:"data"`
+	}
+	err := c.call(ctx, "login encrypt", "transit/encrypt/"+c.loginKEK, map[string]any{
+		"plaintext":       base64.StdEncoding.EncodeToString(plaintext),
+		"associated_data": base64.StdEncoding.EncodeToString(ad),
+	}, &out)
+	if err != nil {
+		return "", 0, err
+	}
+	v, _, ok := parseVersioned(out.Data.Ciphertext)
+	if !ok || len(out.Data.Ciphertext) > 2048 {
+		return "", 0, errors.New("openbao login encrypt: malformed ciphertext")
+	}
+	return out.Data.Ciphertext, v, nil
+}
+
+// OpenLogins implements app.LoginKeys (transit/decrypt with batch_input, in
+// chunks of maxBatch). OpenBao answers a batch with a per-item failure with
+// status 400 and per-item results (spike S6); those items become
+// app.ErrDataIntegrity, the others still decrypt.
+func (c *Client) OpenLogins(ctx context.Context, items []app.SealedLogin) ([][]byte, []error, error) {
+	pts := make([][]byte, len(items))
+	errs := make([]error, len(items))
+	for start := 0; start < len(items); start += maxBatch {
+		end := min(start+maxBatch, len(items))
+		if err := c.openChunk(ctx, items[start:end], pts[start:end], errs[start:end]); err != nil {
+			for _, p := range pts {
+				clear(p)
+			}
+			return nil, nil, err
+		}
+	}
+	return pts, errs, nil
+}
+
+func (c *Client) openChunk(ctx context.Context, items []app.SealedLogin, pts [][]byte, errs []error) error {
+	const op = "login decrypt"
+	batch := make([]map[string]string, len(items))
+	for i, it := range items {
+		batch[i] = map[string]string{
+			"ciphertext": it.Ciphertext, "associated_data": base64.StdEncoding.EncodeToString(it.AD),
+		}
+	}
+	status, b, err := c.do(ctx, op, "transit/decrypt/"+c.loginKEK, map[string]any{"batch_input": batch})
+	if err != nil {
+		return err
+	}
+	defer clear(b)
+	if status != http.StatusOK && status != http.StatusBadRequest {
+		return &statusError{op: op, status: status}
+	}
+	var out struct {
+		Data struct {
+			BatchResults []struct {
+				Plaintext string `json:"plaintext"`
+				Error     string `json:"error"`
+			} `json:"batch_results"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(b, &out); err != nil || len(out.Data.BatchResults) != len(items) {
+		if status == http.StatusBadRequest {
+			return unavailable(op, "status 400")
+		}
+		return fmt.Errorf("openbao %s: decode response", op)
+	}
+	for i, r := range out.Data.BatchResults {
+		if r.Error != "" {
+			errs[i] = fmt.Errorf("openbao %s: %w", op, app.ErrDataIntegrity)
+			continue
+		}
+		pt, err := base64.StdEncoding.DecodeString(r.Plaintext)
+		if err != nil {
+			errs[i] = fmt.Errorf("openbao %s: %w", op, app.ErrDataIntegrity)
+			continue
+		}
+		pts[i] = pt
+		out.Data.BatchResults[i].Plaintext = ""
+	}
+	return nil
 }

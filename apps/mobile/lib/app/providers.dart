@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_ory_auth_mobile/core/config/env.dart';
+import 'package:go_ory_auth_mobile/core/identity/customer_auth_client.dart';
 import 'package:go_ory_auth_mobile/core/kratos/kratos_client.dart';
 import 'package:go_ory_auth_mobile/core/kratos/ory_kratos_client.dart';
 import 'package:go_ory_auth_mobile/core/logging/app_logger.dart';
@@ -36,10 +37,21 @@ final kratosClientProvider = Provider<KratosClient>((ref) {
   );
 });
 
+/// `POST /v1/auth/{login,registration,recovery}` (public: no Bearer token).
+final customerAuthProvider = Provider<CustomerAuthApi>(
+  (ref) => HttpCustomerAuthApi(
+    buildPublicApiDio(
+      baseUrl: ref.watch(envProvider).apiUrl,
+      logger: ref.watch(loggerProvider),
+    ),
+  ),
+);
+
 final authRepositoryProvider = Provider<AuthRepository>(
   (ref) => AuthRepository(
     kratos: ref.watch(kratosClientProvider),
     tokens: ref.watch(tokenStoreProvider),
+    customerAuth: ref.watch(customerAuthProvider),
   ),
 );
 

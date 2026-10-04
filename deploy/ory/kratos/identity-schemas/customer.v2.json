@@ -1,0 +1,38 @@
+{
+  "$id": "https://schemas.go-ory-auth-example.local/customer.v2.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Customer (v2)",
+  "description": "ADR-0013/0014: traits hold only an opaque login handle '<base32>@login.invalid' (random since ADR-0014). The email or phone number is encrypted in identity-service, which signs customers in through POST /v1/auth/login; the real name is encrypted personal info.",
+  "type": "object",
+  "properties": {
+    "traits": {
+      "type": "object",
+      "properties": {
+        "login_id": {
+          "type": "string",
+          "format": "email",
+          "pattern": "^[a-z2-7]{52}@login\\.invalid$",
+          "maxLength": 66,
+          "title": "Login",
+          "ory.sh/kratos": {
+            "credentials": {
+              "password": {
+                "identifier": true
+              }
+            },
+            "verification": {
+              "via": "email"
+            },
+            "recovery": {
+              "via": "email"
+            }
+          }
+        }
+      },
+      "required": [
+        "login_id"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

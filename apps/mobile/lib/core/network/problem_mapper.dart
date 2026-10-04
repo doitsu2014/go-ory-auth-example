@@ -25,10 +25,20 @@ AppFailure mapApiError(Object error) {
         return NetworkFailure(detail: error.type.name);
     }
   }
-  return mapProblem(response.statusCode ?? 0, response.data);
+  return mapProblem(
+    response.statusCode ?? 0,
+    response.data,
+    retryAfter: parseRetryAfter(response.headers.value('retry-after')),
+  );
 }
 
-AppFailure mapProblem(int status, Object? data) {
+/// `Retry-After` in delta-seconds (the only form identity-service sends).
+Duration? parseRetryAfter(String? value) {
+  final seconds = int.tryParse(value?.trim() ?? '');
+  return seconds == null || seconds < 0 ? null : Duration(seconds: seconds);
+}
+
+AppFailure mapProblem(int status, Object? data, {Duration? retryAfter}) {
   final body = data is Map
       ? data.cast<String, dynamic>()
       : const <String, dynamic>{};
@@ -52,6 +62,7 @@ AppFailure mapProblem(int status, Object? data) {
     status: status,
     detail: body['detail'] as String? ?? body['title'] as String?,
     fieldErrors: errors,
+    retryAfter: retryAfter,
   );
 }
 

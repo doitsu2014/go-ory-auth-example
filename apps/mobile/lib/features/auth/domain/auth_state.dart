@@ -36,8 +36,9 @@ final class Authenticated extends AuthState {
   /// Flow id from `continue_with: show_verification_ui`, when Kratos sent it.
   final String? verificationFlowId;
 
-  String get email => session.identity.email;
-  bool get emailVerified => session.identity.emailVerified;
+  /// Pseudonymous Kratos identifier; for Kratos calls only, never shown.
+  String get loginId => session.identity.loginId;
+  bool get loginVerified => session.identity.loginVerified;
 
   Authenticated copyWith({
     KratosSession? session,

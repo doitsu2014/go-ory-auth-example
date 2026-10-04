@@ -10,18 +10,24 @@ Base URLs: `https://api.example.com` (prod), `http://localhost:8080` (local).
 
 | Interface | Kind | Consumer | Exposure |
 | --- | --- | --- | --- |
+| Customer sign-in, registration, recovery `POST /v1/auth/{login,registration,recovery,recovery/code}` | REST | Mobile app | Public, no credential, rate limited (ADR-0014) |
 | Customer API `/v1/*` | REST | Mobile app | Public |
 | Admin API `/admin/v1/*` | REST | Admin web | Public (cookie, AAL2) |
 | Kratos webhooks `/internal/hooks/kratos/*` | REST | Kratos | Private `:8081` |
 | Health / metrics | REST | Orchestrator, Prometheus | Private |
 | CLI `identity-service admin bootstrap` | CLI | Operator | Shell |
+| CLI `identity-service pii migrate-kratos-logins`, `pii purge-unbound-logins` | CLI | Operator / scheduler | Shell |
 | Kratos public API | Ory | Both clients | Public (Ory contract, not ours) |
 
 ## Endpoint summary
 
 | Method & path | Auth | Permission | Req |
 | --- | --- | --- | --- |
-| `GET /v1/me` | customer | self | FR-09, FR-10 |
+| `POST /v1/auth/login` | none (rate limited) | — | PLX-FR-01, 06, 07 |
+| `POST /v1/auth/registration` | none (rate limited) | — | PLX-FR-02, 04, 06 |
+| `POST /v1/auth/recovery` | none (rate limited) | — | PLX-FR-03 |
+| `POST /v1/auth/recovery/code` | none (rate limited) | — | PLX-FR-03 |
+| `GET /v1/me` | customer | self | FR-09, FR-10, PLI-FR-07 |
 | `PATCH /v1/me` | customer (verified email) | self | FR-10 |
 | `GET /admin/v1/me` | admin (AAL1 allowed) | — | FR-05, FR-06 |
 | `GET /admin/v1/customers` | admin AAL2 | `view_customers` | FR-11 |
@@ -41,10 +47,12 @@ Base URLs: `https://api.example.com` (prod), `http://localhost:8080` (local).
 | `GET /v1/me/personal-info` | customer | self | PII-FR-01 |
 | `PUT /v1/me/personal-info` | customer (verified email) | self | PII-FR-02, 03 |
 | `DELETE /v1/me/personal-info` | customer | self | PII-FR-04 |
-| `POST /admin/v1/customers/lookup` | admin AAL2, 30/min | `view_customers` | PII-FR-07 |
+| `POST /admin/v1/customers/lookup` | admin AAL2, 30/min | `view_customers` | PII-FR-07, PLI-FR-11 |
 | `GET /admin/v1/customers/{id}/personal-info` | admin AAL2 | `view_customers` (masked) | PII-FR-05 |
-| `POST /admin/v1/customers/{id}/personal-info/reveal` | admin AAL2, 20/h | `reveal_customer_pii` | PII-FR-06 |
-| `POST /internal/hooks/kratos/after-registration` | API key | — | FR-09 |
+| `POST /admin/v1/customers/{id}/personal-info/reveal` | admin AAL2, 20/h | `reveal_customer_pii` | PII-FR-06, PLI-FR-12 |
+| `POST /internal/hooks/kratos/after-registration` | API key | — | FR-09, PLI-FR-16 |
+| `POST /internal/hooks/kratos/pre-registration` | API key | — | PLI-FR-04 |
+| `POST /internal/hooks/kratos/courier` | courier key | — | PLI-FR-05, 06 |
 | `GET /healthz`, `GET /readyz`, `GET /metrics` | none (ops port `:9090`, private) | — | NFR-07 |
 
 Credential per plane: `/m2m/v1/*` accepts only Hydra JWTs (see [09-machine-access](../architecture/09-machine-access.md)). `/v1/*` accepts only `Authorization: Bearer`.
@@ -53,6 +61,100 @@ Every `/admin/v1/customers/{id}/*` endpoint returns `404` when the target isn't 
 `customer` identity.
 
 ---
+
+## Customer auth: `POST /v1/auth/login`, `/registration`, `/recovery`, `/recovery/code`
+
+ADR-0014. The app sends the email or phone number as typed. identity-service
+finds the account's opaque Kratos handle through the keyed lookup hash and
+runs the Kratos native (API) flow server side. A handle is never returned to
+an unauthenticated caller, and neither is a Kratos recovery flow id.
+Verification, the settings flow (including the new password after recovery)
+and logout stay direct to Kratos.
+
+```json
+POST /v1/auth/login            (same body for /v1/auth/registration)
+{ "login": { "type": "phone", "value": "0901 234 567" }, "password": "…" }
+```
+
+```json
+200 OK
+{
+  "session_token": "ory_st_…",
+  "session": { "id": "…", "identity": { "id": "…", "traits": { "login_id": "<handle>@login.invalid" }, … } },
+  "verification_flow_id": "…"
+}
+```
+
+`session` is the Kratos session object, returned to its owner.
+`verification_flow_id` appears only on a registration where Kratos started a
+verification flow.
+
+```json
+POST /v1/auth/recovery
+{ "login": { "type": "email", "value": "an@example.com" } }
+
+200 OK
+{ "recovery_id": "vault:v7:k6u66s4i4zQY…" }
+```
+
+`recovery_id` is the Kratos recovery flow id sealed with the login KEK in
+OpenBao (Transit AEAD, associated data `identity-service/recovery-flow/v1`).
+It is opaque and differs on every call. The answer has the same shape whether
+or not the account exists, because a random decoy handle runs the same flow.
+A code is delivered only to existing accounts.
+
+The flow id is never returned in clear: Kratos's public
+`GET /self-service/recovery/flows?id=` shows the handle in its `email` node.
+
+```json
+POST /v1/auth/recovery/code
+{ "recovery_id": "vault:v7:k6u66s4i4zQY…", "code": "123456" }
+
+200 OK
+{ "session_token": "ory_st_…", "settings_flow_id": "…" }
+```
+
+The token is a privileged Kratos session. The app sets the new password with
+`POST /self-service/settings?flow=<settings_flow_id>` at Kratos
+(`X-Session-Token`). Errors on this endpoint:
+
+- wrong code: `400 auth_flow_rejected` `form`/`4060006`;
+- expired flow: `410 auth_flow_expired` (start again with
+  `POST /v1/auth/recovery`);
+- forged or tampered `recovery_id`: `422 validation_failed` on field
+  `recovery_id` (`invalid`); `code` must be 6 digits.
+
+- **Rejections:** `400 auth_flow_rejected`, with
+  `errors[{field, code}]`:
+  - `field` is `login`, `password` or `form`;
+  - `code` is the Kratos message id, e.g.
+    `{"field":"form","code":"4000006"}` (wrong password or unknown account,
+    identical for both), `password`/`4000032` (too short), `form`/`4000007`
+    (already registered).
+
+  Kratos text, context and the flow itself are never forwarded.
+- **Validation:** `422 validation_failed` on:
+  - `login.type`: `invalid` | `unsupported` (no SMS channel);
+  - `login.value`: `invalid_format` | `too_long` | `invalid_characters` |
+    `unsupported_country`;
+  - `password`: `required` | `too_long` (> 1024).
+
+  An unknown property gives `unknown_field`. The value is never echoed.
+- **Limits** (`429 rate_limited`, `Retry-After`):
+
+  | Applies to | Default | Setting |
+  | --- | --- | --- |
+  | login, recovery and recovery code, per client IP (IPv6 /64) | 20/min, 200/day | `LOGIN_SIGNIN_RATE` |
+  | registration, per client IP | 5/min, 30/day | `LOGIN_REGISTER_RATE` |
+  | per /24 (/48) network | 300/min, 5000/day | `LOGIN_NET_RATE` |
+  | every sign-in attempt per account, recorded before Kratos is called | 10/15 min, 50/day | `LOGIN_ACCOUNT_RATE` |
+  The account limit means anyone can block sign-in to an address for up to
+  15 minutes. This is accepted (ADR-0014); a combined account+IP key or a
+  CAPTCHA is a follow-up.
+- Registration reveals that an address is taken (`4000007`), as native Kratos
+  does. Login and recovery do not.
+- `503 dependency_unavailable` when OpenBao, the database or Kratos is
+  down. The password is never logged or stored.
 
 ## `GET /v1/me`
 
@@ -65,6 +167,7 @@ Authorization: Bearer ory_st_Ab12…
 200 OK
 {
   "id": "5d9c2c61-6a1e-4b8f-9b8a-2f9d6f0c1e11",
+  "login": { "type": "email", "value": "an.nguyen@example.com" },
   "email": "an.nguyen@example.com",
   "email_verified": true,
   "display_name": "An",
@@ -74,11 +177,14 @@ Authorization: Bearer ory_st_Ab12…
 }
 ```
 
-`email`, `email_verified` come from the Kratos session; the rest from
-`profile`. `name` is deprecated and never returned: the customer's real name is
+`login` is decrypted from the login vault (ADR-0013). `email` is deprecated
+and present only for email logins. `email_verified` (from the Kratos session)
+means the login identifier is verified, whether it is an email or a phone.
+The rest comes from `profile`. `name` is deprecated and never returned: the customer's real name is
 encrypted personal info (`GET/PUT /v1/me/personal-info`, field `name`), and
 `display_name` is only an optional nickname. Changing email/password goes
-through the Kratos **settings flow**, not this API.
+through the Kratos **settings flow**, not this API. Changing the login
+identifier is not offered: the Kratos `profile` method is disabled.
 
 ## `PATCH /v1/me`
 
@@ -118,14 +224,16 @@ uses these to route; see auth flows §3.4).
 
 ## `GET /admin/v1/customers`
 
-Query: `email` (exact, via Kratos `credentials_identifier`), `state`
-(`active|inactive`), `page_size`, `page_token`.
+Query: `state` (`active|inactive`), `page_size`, `page_token`. The `email`
+filter was removed, because PII must never appear in a URL. Find a customer
+by login with `POST /admin/v1/customers/lookup {"login": {"type", "value"}}`.
 
 ```json
 200 OK
 {
   "items": [
-    { "id": "5d9c…", "email": "an.nguyen@example.com", "email_verified": true,
+    { "id": "5d9c…", "login": { "type": "email", "masked": "a***@e***.com" },
+      "login_unavailable": false, "email_verified": true,
       "state": "active", "display_name": "An", "created_at": "2026-10-03T08:00:00Z" }
   ],
   "next_page_token": "eyJr…"
@@ -220,3 +328,24 @@ selfservice:
 
 Additive changes only within v1; breaking changes ship `/v2`; deprecations use
 `Deprecation`/`Sunset` headers with ≥ 6 months notice.
+
+### Changelog
+
+- **2026-10-04 (ADR-0013, first-party clients updated in the same release).**
+  - `Me.email` and `Customer.email` are no longer required. `login` and
+    `login_unavailable` were added.
+  - The `email` filter of `GET /admin/v1/customers` was removed in favour of
+    the body lookup.
+  - The reveal response is `RevealedPersonalInfo`, which adds `login`.
+  - New: `POST /v1/auth/identifiers`.
+
+  These are deliberate exceptions to the additive-only rule. They are
+  justified by "no PII in URLs" and by the fact that only first-party clients
+  consume `/v1` and `/admin/v1`.
+- **2026-10-04 (ADR-0014, the app updated in the same release).**
+  - Removed: `POST /v1/auth/identifiers` (now 404).
+  - New: `POST /v1/auth/login`, `POST /v1/auth/registration`,
+    `POST /v1/auth/recovery` (→ `recovery_id`),
+    `POST /v1/auth/recovery/code`, and the problem codes
+    `auth_flow_rejected` (400) and `auth_flow_expired` (410).
+  - Old app builds must update.

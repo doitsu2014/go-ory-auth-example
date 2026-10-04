@@ -23,6 +23,10 @@ var sensitiveKeys = map[string]struct{}{
 	"client_secret": {}, "access_token": {}, "refresh_token": {}, "id_token": {}, "bearer": {}, "jwt": {},
 	"registration_access_token": {}, "secrets_system": {}, "hydra_secrets_system": {},
 	"m2m_client_tag_key": {}, "integrity": {},
+	// Login identifiers and courier delivery (ADR-0013, A12).
+	"value": {}, "identifier": {}, "login": {}, "login_id": {}, "recipient": {}, "to": {},
+	"template_data": {}, "request_headers": {}, "subject": {}, "body": {}, "html_body": {},
+	"kratos_courier_api_key": {}, "courier_dedupe_secret": {}, "sms_http_token": {},
 }
 
 // IsSensitiveKey reports whether a log attribute key must be redacted.

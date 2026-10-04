@@ -7,6 +7,7 @@
 #   ./dev seed EMAIL  create another super_admin (prints a one-time recovery link)
 #   ./dev seed-customers   demo customers with encrypted personal info (Node >= 22)
 #   ./dev migrate-names    move customer names from Kratos traits into encrypted personal info
+#   ./dev migrate-logins   replace legacy customer email traits with pseudonymous logins (ADR-0013)
 #   ./dev smoke       end-to-end smoke test (needs Node >= 22)
 #   ./dev mobile [android|ios]   run the Flutter app against the stack
 #   ./dev web         admin web with Vite hot reload instead of the container
@@ -32,6 +33,16 @@ ensure_env() {
     cp "$ROOT/deploy/compose/.env.example" "$ENV_FILE"
     say "created deploy/compose/.env from the example (local-only values)"
   fi
+  # Add settings introduced after the file was created (e.g. ADR-0013 keys).
+  [[ -z "$(tail -c1 "$ENV_FILE")" ]] || echo >> "$ENV_FILE"
+  local key line
+  while IFS= read -r line; do
+    key="${line%%=*}"
+    if ! grep -q "^${key}=" "$ENV_FILE"; then
+      echo "$line" >> "$ENV_FILE"
+      say "added $key to deploy/compose/.env"
+    fi
+  done < <(grep -E '^[A-Z0-9_]+=' "$ROOT/deploy/compose/.env.example")
   # Kratos runs in a container: a localhost webhook URL (host-run service)
   # makes every customer login fail.
   if grep -q '^IDENTITY_WEBHOOK_BASE_URL=http://localhost' "$ENV_FILE"; then
@@ -68,6 +79,12 @@ migrate_names() {
   compose exec -T identity-service /identity-service pii migrate-kratos-names "$@"
 }
 
+# Replaces legacy customer email traits with pseudonymous login identifiers
+# (ADR-0013; idempotent; prints counts, never addresses). Flags: --dry-run.
+migrate_logins() {
+  compose exec -T identity-service /identity-service pii migrate-kratos-logins "$@"
+}
+
 # Demo customers with encrypted personal info, through the real flows.
 seed_customers() {
   if ! command -v node >/dev/null 2>&1; then
@@ -78,7 +95,7 @@ seed_customers() {
   pw="$(sed -n 's/^SEED_CUSTOMER_PASSWORD=//p' "$ENV_FILE" | tail -1)"
   SEED_CUSTOMER_PASSWORD="$pw" node "$ROOT/scripts/seed-customers.mjs" \
     || say "warning: some demo customers were not seeded; re-run ./dev seed-customers"
-  [[ -n "$pw" ]] && say "demo customers: customer01..05@example.local, password from SEED_CUSTOMER_PASSWORD in deploy/compose/.env"
+  [[ -n "$pw" ]] && say "demo customers: customer01..04@example.local and phone +84900000005, password from SEED_CUSTOMER_PASSWORD in deploy/compose/.env"
   return 0
 }
 
@@ -116,6 +133,8 @@ cmd_up() {
   seed "$ADMIN_EMAIL"
   say "moving customer names from Kratos into encrypted personal info"
   migrate_names || say "warning: some customer names were not migrated; re-run ./dev migrate-names"
+  say "replacing legacy customer emails in Kratos with pseudonymous logins"
+  migrate_logins || say "warning: some customers were not migrated; re-run ./dev migrate-logins"
   say "seeding demo customers (skips the ones that exist)"
   seed_customers
   urls
@@ -175,8 +194,9 @@ case "${1:-up}" in
   smoke) need node "Node >= 22"; node "$ROOT/scripts/smoke.mjs" ;;
   seed-customers) need node "Node >= 22"; ensure_env; seed_customers ;;
   migrate-names) check_docker; shift; migrate_names "$@" ;;
+  migrate-logins) check_docker; shift; migrate_logins "$@" ;;
   mobile) shift; cmd_mobile "${1:-android}" ;;
   web) cmd_web ;;
-  -h | --help | help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//' ;;
+  -h | --help | help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command: $1 (try ./dev help)" ;;
 esac

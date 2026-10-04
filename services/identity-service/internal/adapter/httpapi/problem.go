@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/adapter/httpapi/gen"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/app"
@@ -30,6 +31,11 @@ const (
 	CodeRateLimited           = "rate_limited"
 	CodeInternal              = "internal"
 	CodeMethodNotAllowed      = "method_not_allowed"
+	// CodeAuthFlowRejected: Kratos rejected a customer login, registration
+	// or recovery (ADR-0014); errors[].code is the Kratos message id.
+	CodeAuthFlowRejected = "auth_flow_rejected"
+	// CodeAuthFlowExpired: the Kratos flow behind a recovery expired.
+	CodeAuthFlowExpired = "auth_flow_expired"
 	// Machine plane (RFC 6750 §3.1 error codes, also in WWW-Authenticate).
 	CodeInvalidRequest    = "invalid_request"
 	CodeInvalidToken      = "invalid_token"
@@ -56,6 +62,8 @@ var problemSpecs = map[string]problemSpec{
 	CodeRateLimited:           {http.StatusTooManyRequests, "Too many requests", "rate-limited"},
 	CodeInternal:              {http.StatusInternalServerError, "Internal error", "internal"},
 	CodeMethodNotAllowed:      {http.StatusMethodNotAllowed, "Method not allowed", "method-not-allowed"},
+	CodeAuthFlowRejected:      {http.StatusBadRequest, "Authentication rejected", "auth-flow-rejected"},
+	CodeAuthFlowExpired:       {http.StatusGone, "Flow expired", "auth-flow-expired"},
 	CodeInvalidRequest:        {http.StatusBadRequest, "Invalid request", "invalid-request"},
 	CodeInvalidToken:          {http.StatusUnauthorized, "Invalid access token", "invalid-token"},
 	CodeInsufficientScope:     {http.StatusForbidden, "Insufficient scope", "insufficient-scope"},
@@ -68,6 +76,11 @@ func writeProblem(w http.ResponseWriter, r *http.Request, code, detail string, f
 		code, spec = CodeInternal, problemSpecs[CodeInternal]
 	}
 	p := gen.Problem{Type: problemBase + spec.slug, Title: spec.title, Status: spec.status, Code: code}
+	if code == CodeRateLimited && w.Header().Get("Retry-After") == "" {
+		// Sliding windows have no single reset time; one minute is the
+		// shortest window of every limit (api-contract §3).
+		w.Header().Set("Retry-After", "60")
+	}
 	if detail != "" {
 		p.Detail = &detail
 	}
@@ -97,9 +110,18 @@ func writeProblem(w http.ResponseWriter, r *http.Request, code, detail string, f
 // and app errors become HTTP semantics.
 func classify(err error) (code string, fields []app.FieldError) {
 	var ve *app.ValidationError
+	var fe *app.AuthFlowError
 	switch {
 	case errors.As(err, &ve):
 		return CodeValidationFailed, ve.Fields
+	case errors.As(err, &fe):
+		fields := make([]app.FieldError, len(fe.Messages))
+		for i, m := range fe.Messages {
+			fields[i] = app.FieldError{Field: m.Field, Code: strconv.Itoa(m.ID)}
+		}
+		return CodeAuthFlowRejected, fields
+	case errors.Is(err, app.ErrAuthFlowExpired):
+		return CodeAuthFlowExpired, nil
 	case errors.Is(err, app.ErrUnauthenticated):
 		return CodeUnauthenticated, nil
 	case errors.Is(err, app.ErrAAL2Required):

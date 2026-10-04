@@ -55,6 +55,24 @@ func (e IdentityState) Valid() bool {
 	}
 }
 
+// Defines values for LoginType.
+const (
+	Email LoginType = "email"
+	Phone LoginType = "phone"
+)
+
+// Valid indicates whether the value is a known member of the LoginType enum.
+func (e LoginType) Valid() bool {
+	switch e {
+	case Email:
+		return true
+	case Phone:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for MachineScope.
 const (
 	AuditRead     MachineScope = "audit:read"
@@ -149,6 +167,7 @@ func (e Permission) Valid() bool {
 const (
 	RevealRequestFieldsAddress     RevealRequestFields = "address"
 	RevealRequestFieldsDateOfBirth RevealRequestFields = "date_of_birth"
+	RevealRequestFieldsLogin       RevealRequestFields = "login"
 	RevealRequestFieldsName        RevealRequestFields = "name"
 	RevealRequestFieldsNationalId  RevealRequestFields = "national_id"
 	RevealRequestFieldsPhoneNumber RevealRequestFields = "phone_number"
@@ -160,6 +179,8 @@ func (e RevealRequestFields) Valid() bool {
 	case RevealRequestFieldsAddress:
 		return true
 	case RevealRequestFieldsDateOfBirth:
+		return true
+	case RevealRequestFieldsLogin:
 		return true
 	case RevealRequestFieldsName:
 		return true
@@ -301,10 +322,21 @@ type Customer struct {
 	CreatedAt time.Time `json:"created_at"`
 
 	// DisplayName Optional nickname; not the real name
-	DisplayName   nullable.Nullable[string] `json:"display_name,omitempty"`
-	Email         openapi_types.Email       `json:"email"`
-	EmailVerified bool                      `json:"email_verified"`
-	Id            openapi_types.UUID        `json:"id"`
+	DisplayName nullable.Nullable[string] `json:"display_name,omitempty"`
+
+	// Email Never returned for customers (ADR-0013). Use `login`.
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
+	Email *openapi_types.Email `json:"email,omitempty"`
+
+	// EmailVerified The login identifier is verified
+	EmailVerified bool               `json:"email_verified"`
+	Id            openapi_types.UUID `json:"id"`
+
+	// Login Masked login identifier; null when it could not be read
+	Login nullable.Nullable[MaskedLogin] `json:"login,omitempty"`
+
+	// LoginUnavailable The key manager was unavailable; `login` is null for pseudonymous customers
+	LoginUnavailable bool `json:"login_unavailable"`
 
 	// Name Never returned for customers. The name is encrypted personal info (masked via /admin/v1/customers/{id}/personal-info).
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
@@ -312,16 +344,37 @@ type Customer struct {
 	State IdentityState `json:"state"`
 }
 
-// CustomerLookupRequest defines model for CustomerLookupRequest.
+// CustomerAuthSession defines model for CustomerAuthSession.
+type CustomerAuthSession struct {
+	// Session The Kratos session object, as returned by Kratos to its owner
+	Session json.RawMessage `json:"session"`
+
+	// SessionToken Kratos session token (store in secure storage; send as Bearer to /v1 and X-Session-Token to Kratos)
+	SessionToken string `json:"session_token"`
+
+	// VerificationFlowId Registration only, when Kratos started a verification flow (code already sent)
+	VerificationFlowId *openapi_types.UUID `json:"verification_flow_id,omitempty"`
+}
+
+// CustomerCredentials defines model for CustomerCredentials.
+type CustomerCredentials struct {
+	Login    LoginIdentifier `json:"login"`
+	Password string          `json:"password"`
+}
+
+// CustomerLookupRequest Exactly one of phone_number or login (else 422 validation_failed, field body, code one_of).
 type CustomerLookupRequest struct {
+	Login *LoginIdentifier `json:"login,omitempty"`
+
 	// PhoneNumber Example: +84901234567
-	PhoneNumber string `json:"phone_number"`
+	PhoneNumber *string `json:"phone_number,omitempty"`
 }
 
 // CustomerLookupResult Matches by self-declared phone number (phone_verified false); not proof of ownership.
 type CustomerLookupResult struct {
 	Items []struct {
 		Id           openapi_types.UUID `json:"id"`
+		Login        *MaskedLogin       `json:"login,omitempty"`
 		PersonalInfo MaskedPersonalInfo `json:"personal_info"`
 		State        *IdentityState     `json:"state,omitempty"`
 	} `json:"items"`
@@ -334,6 +387,32 @@ type CustomerLookupResult struct {
 type CustomerPage struct {
 	Items         []Customer `json:"items"`
 	NextPageToken *string    `json:"next_page_token,omitempty"`
+}
+
+// CustomerRecoveryCodeRequest defines model for CustomerRecoveryCodeRequest.
+type CustomerRecoveryCodeRequest struct {
+	Code       string `json:"code"`
+	RecoveryId string `json:"recovery_id"`
+}
+
+// CustomerRecoveryGrant defines model for CustomerRecoveryGrant.
+type CustomerRecoveryGrant struct {
+	// SessionToken Privileged Kratos session token (store it only after the new password is set)
+	SessionToken string `json:"session_token"`
+
+	// SettingsFlowId Kratos native settings flow for the new password
+	SettingsFlowId string `json:"settings_flow_id"`
+}
+
+// CustomerRecoveryRequest defines model for CustomerRecoveryRequest.
+type CustomerRecoveryRequest struct {
+	Login LoginIdentifier `json:"login"`
+}
+
+// CustomerRecoveryStarted defines model for CustomerRecoveryStarted.
+type CustomerRecoveryStarted struct {
+	// RecoveryId Opaque reference to the recovery flow (sealed by identity-service); send it back with the code
+	RecoveryId string `json:"recovery_id"`
 }
 
 // CustomerState defines model for CustomerState.
@@ -366,6 +445,17 @@ type InvitedAdmin struct {
 	InvitationExpiresAt time.Time           `json:"invitation_expires_at"`
 	Role                Role                `json:"role"`
 }
+
+// LoginIdentifier defines model for LoginIdentifier.
+type LoginIdentifier struct {
+	Type LoginType `json:"type"`
+
+	// Value Email (lower-cased) or phone (E.164) in responses; as typed in requests
+	Value string `json:"value"`
+}
+
+// LoginType defines model for LoginType.
+type LoginType string
 
 // MachineAuditEvent defines model for MachineAuditEvent.
 type MachineAuditEvent struct {
@@ -401,6 +491,15 @@ type MachineCustomer struct {
 
 // MachineScope defines model for MachineScope.
 type MachineScope string
+
+// MaskedLogin defines model for MaskedLogin.
+type MaskedLogin struct {
+	// Masked Email: first character of local part and domain label + TLD; phone: calling code + 7 stars + last 3
+	//
+	// Example: a***@e***.com
+	Masked string    `json:"masked"`
+	Type   LoginType `json:"type"`
+}
 
 // MaskedPersonalInfo defines model for MaskedPersonalInfo.
 type MaskedPersonalInfo struct {
@@ -449,13 +548,19 @@ type Me struct {
 	CreatedAt time.Time                 `json:"created_at"`
 
 	// DisplayName Optional nickname; not the real name
-	DisplayName   nullable.Nullable[string] `json:"display_name,omitempty"`
-	Email         openapi_types.Email       `json:"email"`
-	EmailVerified bool                      `json:"email_verified"`
-	Id            openapi_types.UUID        `json:"id"`
+	DisplayName nullable.Nullable[string] `json:"display_name,omitempty"`
+
+	// Email Present only when login.type is email. Use `login`.
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
+	Email *openapi_types.Email `json:"email,omitempty"`
+
+	// EmailVerified The login identifier (email or phone) is verified; the name is kept for compatibility
+	EmailVerified bool               `json:"email_verified"`
+	Id            openapi_types.UUID `json:"id"`
 
 	// Locale Example: vi-VN
-	Locale string `json:"locale"`
+	Locale string          `json:"locale"`
+	Login  LoginIdentifier `json:"login"`
 
 	// Name Never returned. The customer's name is encrypted personal info (GET /v1/me/personal-info).
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
@@ -502,7 +607,9 @@ type Problem struct {
 	// Code Stable machine code. Known values: unauthenticated, forbidden, not_admin,
 	// aal2_required, mfa_enrollment_required, email_not_verified, not_found,
 	// conflict, validation_failed, rate_limited, dependency_unavailable, internal,
-	// invalid_request, invalid_token, insufficient_scope (machine plane; also sent in `WWW-Authenticate`).
+	// invalid_request, invalid_token, insufficient_scope (machine plane; also sent in `WWW-Authenticate`),
+	// auth_flow_rejected (400, /v1/auth/*: Kratos rejected the flow; `errors[].code` is the Kratos message id,
+	// `errors[].field` is login, password or form), auth_flow_expired (410, /v1/auth/recovery/code: start again).
 	// Clients must tolerate unknown values.
 	Code      string        `json:"code"`
 	Detail    *string       `json:"detail,omitempty"`
@@ -535,6 +642,17 @@ type RevealRequestFields string
 
 // RevealRequestReasonCode defines model for RevealRequest.ReasonCode.
 type RevealRequestReasonCode string
+
+// RevealedPersonalInfo Reveal response. Personal info fields (as PersonalInfo) plus the login identifier.
+type RevealedPersonalInfo struct {
+	Address     nullable.Nullable[Address]            `json:"address,omitempty"`
+	DateOfBirth nullable.Nullable[openapi_types.Date] `json:"date_of_birth,omitempty"`
+	Login       nullable.Nullable[LoginIdentifier]    `json:"login,omitempty"`
+	Name        nullable.Nullable[PersonName]         `json:"name,omitempty"`
+	NationalId  nullable.Nullable[NationalId]         `json:"national_id,omitempty"`
+	PhoneNumber nullable.Nullable[string]             `json:"phone_number,omitempty"`
+	UpdatedAt   nullable.Nullable[time.Time]          `json:"updated_at,omitempty"`
+}
 
 // Role defines model for Role.
 type Role string
@@ -608,10 +726,9 @@ type ListAuditEventsParams struct {
 
 // ListCustomersParams defines parameters for ListCustomers.
 type ListCustomersParams struct {
-	Email     *openapi_types.Email `form:"email,omitempty" json:"email,omitempty"`
-	State     *IdentityState       `form:"state,omitempty" json:"state,omitempty"`
-	PageSize  *PageSize            `form:"page_size,omitempty" json:"page_size,omitempty"`
-	PageToken *PageToken           `form:"page_token,omitempty" json:"page_token,omitempty"`
+	State     *IdentityState `form:"state,omitempty" json:"state,omitempty"`
+	PageSize  *PageSize      `form:"page_size,omitempty" json:"page_size,omitempty"`
+	PageToken *PageToken     `form:"page_token,omitempty" json:"page_token,omitempty"`
 }
 
 // CreateServiceClientParams defines parameters for CreateServiceClient.
@@ -649,6 +766,18 @@ type RevealCustomerPersonalInfoJSONRequestBody = RevealRequest
 // CreateServiceClientJSONRequestBody defines body for CreateServiceClient for application/json ContentType.
 type CreateServiceClientJSONRequestBody = CreateServiceClientRequest
 
+// CustomerLoginJSONRequestBody defines body for CustomerLogin for application/json ContentType.
+type CustomerLoginJSONRequestBody = CustomerCredentials
+
+// CustomerRecoveryJSONRequestBody defines body for CustomerRecovery for application/json ContentType.
+type CustomerRecoveryJSONRequestBody = CustomerRecoveryRequest
+
+// CustomerRecoveryCodeJSONRequestBody defines body for CustomerRecoveryCode for application/json ContentType.
+type CustomerRecoveryCodeJSONRequestBody = CustomerRecoveryCodeRequest
+
+// CustomerRegistrationJSONRequestBody defines body for CustomerRegistration for application/json ContentType.
+type CustomerRegistrationJSONRequestBody = CustomerCredentials
+
 // UpdateMeJSONRequestBody defines body for UpdateMe for application/json ContentType.
 type UpdateMeJSONRequestBody = UpdateMeRequest
 
@@ -672,7 +801,7 @@ type ServerInterface interface {
 	// ListCustomers List customers (permission view_customers)
 	// (GET /admin/v1/customers)
 	ListCustomers(w http.ResponseWriter, r *http.Request, params ListCustomersParams)
-	// LookupCustomers Find customers by phone number via the blind index (permission view_customers)
+	// LookupCustomers Find customers by personal-info phone number or by login identifier (permission view_customers)
 	// (POST /admin/v1/customers/lookup)
 	LookupCustomers(w http.ResponseWriter, r *http.Request)
 	// GetCustomer Get one customer (permission view_customers)
@@ -717,6 +846,18 @@ type ServerInterface interface {
 	// GetMachineCustomer Customer status for service clients (scope customers:read); no personal data
 	// (GET /m2m/v1/customers/{id})
 	GetMachineCustomer(w http.ResponseWriter, r *http.Request, id IdentityId)
+	// CustomerLogin Sign a customer in with email or phone number and password
+	// (POST /v1/auth/login)
+	CustomerLogin(w http.ResponseWriter, r *http.Request)
+	// CustomerRecovery Start password recovery by code for an email or phone number
+	// (POST /v1/auth/recovery)
+	CustomerRecovery(w http.ResponseWriter, r *http.Request)
+	// CustomerRecoveryCode Submit a recovery code
+	// (POST /v1/auth/recovery/code)
+	CustomerRecoveryCode(w http.ResponseWriter, r *http.Request)
+	// CustomerRegistration Register a customer with email or phone number and password
+	// (POST /v1/auth/registration)
+	CustomerRegistration(w http.ResponseWriter, r *http.Request)
 	// GetMe Current customer profile
 	// (GET /v1/me)
 	GetMe(w http.ResponseWriter, r *http.Request)
@@ -768,7 +909,7 @@ func (_ Unimplemented) ListCustomers(w http.ResponseWriter, r *http.Request, par
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// LookupCustomers Find customers by phone number via the blind index (permission view_customers)
+// LookupCustomers Find customers by personal-info phone number or by login identifier (permission view_customers)
 // (POST /admin/v1/customers/lookup)
 func (_ Unimplemented) LookupCustomers(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -855,6 +996,30 @@ func (_ Unimplemented) ListMachineAuditEvents(w http.ResponseWriter, r *http.Req
 // GetMachineCustomer Customer status for service clients (scope customers:read); no personal data
 // (GET /m2m/v1/customers/{id})
 func (_ Unimplemented) GetMachineCustomer(w http.ResponseWriter, r *http.Request, id IdentityId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CustomerLogin Sign a customer in with email or phone number and password
+// (POST /v1/auth/login)
+func (_ Unimplemented) CustomerLogin(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CustomerRecovery Start password recovery by code for an email or phone number
+// (POST /v1/auth/recovery)
+func (_ Unimplemented) CustomerRecovery(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CustomerRecoveryCode Submit a recovery code
+// (POST /v1/auth/recovery/code)
+func (_ Unimplemented) CustomerRecoveryCode(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CustomerRegistration Register a customer with email or phone number and password
+// (POST /v1/auth/registration)
+func (_ Unimplemented) CustomerRegistration(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1107,19 +1272,6 @@ func (siw *ServerInterfaceWrapper) ListCustomers(w http.ResponseWriter, r *http.
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params ListCustomersParams
-
-	// ------------- Optional query parameter "email" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "email", r.URL.Query(), &params.Email, runtime.BindQueryParameterOptions{Type: "string", Format: "email"})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "email"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "email", Err: err})
-		}
-		return
-	}
 
 	// ------------- Optional query parameter "state" -------------
 
@@ -1603,6 +1755,62 @@ func (siw *ServerInterfaceWrapper) GetMachineCustomer(w http.ResponseWriter, r *
 	handler.ServeHTTP(w, r)
 }
 
+// CustomerLogin operation middleware
+func (siw *ServerInterfaceWrapper) CustomerLogin(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CustomerLogin(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CustomerRecovery operation middleware
+func (siw *ServerInterfaceWrapper) CustomerRecovery(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CustomerRecovery(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CustomerRecoveryCode operation middleware
+func (siw *ServerInterfaceWrapper) CustomerRecoveryCode(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CustomerRecoveryCode(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CustomerRegistration operation middleware
+func (siw *ServerInterfaceWrapper) CustomerRegistration(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CustomerRegistration(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetMe operation middleware
 func (siw *ServerInterfaceWrapper) GetMe(w http.ResponseWriter, r *http.Request) {
 
@@ -1786,6 +1994,18 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/v1/auth/login", wrapper.CustomerLogin)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/v1/auth/registration", wrapper.CustomerRegistration)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/v1/auth/recovery", wrapper.CustomerRecovery)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/v1/auth/recovery/code", wrapper.CustomerRecoveryCode)
+	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/v1/me", wrapper.GetMe)
 	})
@@ -2582,7 +2802,7 @@ type RevealCustomerPersonalInfoResponseObject interface {
 	VisitRevealCustomerPersonalInfoResponse(w http.ResponseWriter) error
 }
 
-type RevealCustomerPersonalInfo200JSONResponse PersonalInfo
+type RevealCustomerPersonalInfo200JSONResponse RevealedPersonalInfo
 
 func (response RevealCustomerPersonalInfo200JSONResponse) VisitRevealCustomerPersonalInfoResponse(w http.ResponseWriter) error {
 
@@ -3417,6 +3637,340 @@ func (response GetMachineCustomer503ApplicationProblemPlusJSONResponse) VisitGet
 	return err
 }
 
+type CustomerLoginRequestObject struct {
+	Body *CustomerLoginJSONRequestBody
+}
+
+type CustomerLoginResponseObject interface {
+	VisitCustomerLoginResponse(w http.ResponseWriter) error
+}
+
+type CustomerLogin200JSONResponse CustomerAuthSession
+
+func (response CustomerLogin200JSONResponse) VisitCustomerLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CustomerLogin400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response CustomerLogin400ApplicationProblemPlusJSONResponse) VisitCustomerLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CustomerLogin422ApplicationProblemPlusJSONResponse Problem
+
+func (response CustomerLogin422ApplicationProblemPlusJSONResponse) VisitCustomerLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CustomerLogin429ApplicationProblemPlusJSONResponse Problem
+
+func (response CustomerLogin429ApplicationProblemPlusJSONResponse) VisitCustomerLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CustomerLogin503ApplicationProblemPlusJSONResponse Problem
+
+func (response CustomerLogin503ApplicationProblemPlusJSONResponse) VisitCustomerLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CustomerRecoveryRequestObject struct {
+	Body *CustomerRecoveryJSONRequestBody
+}
+
+type CustomerRecoveryResponseObject interface {
+	VisitCustomerRecoveryResponse(w http.ResponseWriter) error
+}
+
+type CustomerRecovery200JSONResponse CustomerRecoveryStarted
+
+func (response CustomerRecovery200JSONResponse) VisitCustomerRecoveryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CustomerRecovery400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response CustomerRecovery400ApplicationProblemPlusJSONResponse) VisitCustomerRecoveryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CustomerRecovery422ApplicationProblemPlusJSONResponse Problem
+
+func (response CustomerRecovery422ApplicationProblemPlusJSONResponse) VisitCustomerRecoveryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CustomerRecovery429ApplicationProblemPlusJSONResponse Problem
+
+func (response CustomerRecovery429ApplicationProblemPlusJSONResponse) VisitCustomerRecoveryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CustomerRecovery503ApplicationProblemPlusJSONResponse Problem
+
+func (response CustomerRecovery503ApplicationProblemPlusJSONResponse) VisitCustomerRecoveryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CustomerRecoveryCodeRequestObject struct {
+	Body *CustomerRecoveryCodeJSONRequestBody
+}
+
+type CustomerRecoveryCodeResponseObject interface {
+	VisitCustomerRecoveryCodeResponse(w http.ResponseWriter) error
+}
+
+type CustomerRecoveryCode200JSONResponse CustomerRecoveryGrant
+
+func (response CustomerRecoveryCode200JSONResponse) VisitCustomerRecoveryCodeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CustomerRecoveryCode400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response CustomerRecoveryCode400ApplicationProblemPlusJSONResponse) VisitCustomerRecoveryCodeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CustomerRecoveryCode410ApplicationProblemPlusJSONResponse Problem
+
+func (response CustomerRecoveryCode410ApplicationProblemPlusJSONResponse) VisitCustomerRecoveryCodeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(410)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CustomerRecoveryCode422ApplicationProblemPlusJSONResponse Problem
+
+func (response CustomerRecoveryCode422ApplicationProblemPlusJSONResponse) VisitCustomerRecoveryCodeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CustomerRecoveryCode429ApplicationProblemPlusJSONResponse Problem
+
+func (response CustomerRecoveryCode429ApplicationProblemPlusJSONResponse) VisitCustomerRecoveryCodeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CustomerRecoveryCode503ApplicationProblemPlusJSONResponse Problem
+
+func (response CustomerRecoveryCode503ApplicationProblemPlusJSONResponse) VisitCustomerRecoveryCodeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CustomerRegistrationRequestObject struct {
+	Body *CustomerRegistrationJSONRequestBody
+}
+
+type CustomerRegistrationResponseObject interface {
+	VisitCustomerRegistrationResponse(w http.ResponseWriter) error
+}
+
+type CustomerRegistration200JSONResponse CustomerAuthSession
+
+func (response CustomerRegistration200JSONResponse) VisitCustomerRegistrationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CustomerRegistration400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response CustomerRegistration400ApplicationProblemPlusJSONResponse) VisitCustomerRegistrationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CustomerRegistration422ApplicationProblemPlusJSONResponse Problem
+
+func (response CustomerRegistration422ApplicationProblemPlusJSONResponse) VisitCustomerRegistrationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CustomerRegistration429ApplicationProblemPlusJSONResponse Problem
+
+func (response CustomerRegistration429ApplicationProblemPlusJSONResponse) VisitCustomerRegistrationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CustomerRegistration503ApplicationProblemPlusJSONResponse Problem
+
+func (response CustomerRegistration503ApplicationProblemPlusJSONResponse) VisitCustomerRegistrationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetMeRequestObject struct {
 }
 
@@ -3755,7 +4309,7 @@ type StrictServerInterface interface {
 	// ListCustomers List customers (permission view_customers)
 	// (GET /admin/v1/customers)
 	ListCustomers(ctx context.Context, request ListCustomersRequestObject) (ListCustomersResponseObject, error)
-	// LookupCustomers Find customers by phone number via the blind index (permission view_customers)
+	// LookupCustomers Find customers by personal-info phone number or by login identifier (permission view_customers)
 	// (POST /admin/v1/customers/lookup)
 	LookupCustomers(ctx context.Context, request LookupCustomersRequestObject) (LookupCustomersResponseObject, error)
 	// GetCustomer Get one customer (permission view_customers)
@@ -3800,6 +4354,18 @@ type StrictServerInterface interface {
 	// GetMachineCustomer Customer status for service clients (scope customers:read); no personal data
 	// (GET /m2m/v1/customers/{id})
 	GetMachineCustomer(ctx context.Context, request GetMachineCustomerRequestObject) (GetMachineCustomerResponseObject, error)
+	// CustomerLogin Sign a customer in with email or phone number and password
+	// (POST /v1/auth/login)
+	CustomerLogin(ctx context.Context, request CustomerLoginRequestObject) (CustomerLoginResponseObject, error)
+	// CustomerRecovery Start password recovery by code for an email or phone number
+	// (POST /v1/auth/recovery)
+	CustomerRecovery(ctx context.Context, request CustomerRecoveryRequestObject) (CustomerRecoveryResponseObject, error)
+	// CustomerRecoveryCode Submit a recovery code
+	// (POST /v1/auth/recovery/code)
+	CustomerRecoveryCode(ctx context.Context, request CustomerRecoveryCodeRequestObject) (CustomerRecoveryCodeResponseObject, error)
+	// CustomerRegistration Register a customer with email or phone number and password
+	// (POST /v1/auth/registration)
+	CustomerRegistration(ctx context.Context, request CustomerRegistrationRequestObject) (CustomerRegistrationResponseObject, error)
 	// GetMe Current customer profile
 	// (GET /v1/me)
 	GetMe(ctx context.Context, request GetMeRequestObject) (GetMeResponseObject, error)
@@ -4418,6 +4984,130 @@ func (sh *strictHandler) GetMachineCustomer(w http.ResponseWriter, r *http.Reque
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetMachineCustomerResponseObject); ok {
 		if err := validResponse.VisitGetMachineCustomerResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CustomerLogin operation middleware
+func (sh *strictHandler) CustomerLogin(w http.ResponseWriter, r *http.Request) {
+	var request CustomerLoginRequestObject
+
+	var body CustomerLoginJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CustomerLogin(ctx, request.(CustomerLoginRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CustomerLogin")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CustomerLoginResponseObject); ok {
+		if err := validResponse.VisitCustomerLoginResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CustomerRecovery operation middleware
+func (sh *strictHandler) CustomerRecovery(w http.ResponseWriter, r *http.Request) {
+	var request CustomerRecoveryRequestObject
+
+	var body CustomerRecoveryJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CustomerRecovery(ctx, request.(CustomerRecoveryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CustomerRecovery")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CustomerRecoveryResponseObject); ok {
+		if err := validResponse.VisitCustomerRecoveryResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CustomerRecoveryCode operation middleware
+func (sh *strictHandler) CustomerRecoveryCode(w http.ResponseWriter, r *http.Request) {
+	var request CustomerRecoveryCodeRequestObject
+
+	var body CustomerRecoveryCodeJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CustomerRecoveryCode(ctx, request.(CustomerRecoveryCodeRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CustomerRecoveryCode")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CustomerRecoveryCodeResponseObject); ok {
+		if err := validResponse.VisitCustomerRecoveryCodeResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CustomerRegistration operation middleware
+func (sh *strictHandler) CustomerRegistration(w http.ResponseWriter, r *http.Request) {
+	var request CustomerRegistrationRequestObject
+
+	var body CustomerRegistrationJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CustomerRegistration(ctx, request.(CustomerRegistrationRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CustomerRegistration")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CustomerRegistrationResponseObject); ok {
+		if err := validResponse.VisitCustomerRegistrationResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

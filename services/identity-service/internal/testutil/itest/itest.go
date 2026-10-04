@@ -43,6 +43,10 @@ type Env struct {
 	// ClientTagKey is the in-process service's M2M_CLIENT_TAG_KEY (tests run
 	// their own service instance, so any ≥ 32-byte key works).
 	ClientTagKey []byte
+	// API is the running stack's identity-service (customer login,
+	// registration and recovery, ADR-0014; it shares the database and
+	// OpenBao keys with in-process test services and Kratos's webhooks).
+	API string
 }
 
 // RepoRoot walks up from the working directory to the repository root
@@ -97,6 +101,7 @@ func Load() Env {
 		HydraPublic:  getenv("HYDRA_PUBLIC_URL", "http://localhost:4444"),
 		HydraIssuer:  getenv("M2M_ISSUER", "http://localhost:4444"),
 		ClientTagKey: []byte("itest-only-client-tag-key-000000"),
+		API:          getenv("API_URL", "http://localhost:8080"),
 	}
 }
 
@@ -200,22 +205,37 @@ func (f Flow) TOTPSecret() string {
 	return ""
 }
 
-// RegisterCustomer registers via the native API flow and returns the flow
-// response (session token, identity id, verification flow id).
+// RegisterCustomer registers through identity-service
+// (POST /v1/auth/registration, ADR-0014) and returns the response (session
+// token, session with the identity id).
 func (e Env) RegisterCustomer(t *testing.T, email string) Flow {
 	t.Helper()
-	var flow Flow
-	if st, _ := JSON(t, nil, "GET", e.KratosPublic+"/self-service/registration/api", nil, nil, &flow); st != 200 {
-		t.Fatalf("registration flow: %d", st)
-	}
 	var out Flow
-	st, _ := JSON(t, nil, "POST", e.KratosPublic+"/self-service/registration?flow="+flow.ID, nil, map[string]any{
-		"method": "password", "password": Password, "traits": map[string]any{"email": email},
+	st, _ := JSON(t, nil, "POST", e.API+"/v1/auth/registration", nil, map[string]any{
+		"login": map[string]any{"type": "email", "value": email}, "password": Password,
 	}, &out)
 	if st != 200 || out.SessionToken == "" {
-		t.Fatalf("register: %d %+v", st, out.UI.Messages)
+		t.Fatalf("register: %d", st)
 	}
 	return out
+}
+
+// Handle returns the session owner's Kratos login handle (whoami
+// traits.login_id): what the app uses for verification and refresh logins.
+func (e Env) Handle(t *testing.T, sessionToken string) string {
+	t.Helper()
+	var out struct {
+		Identity struct {
+			Traits struct {
+				LoginID string `json:"login_id"`
+			} `json:"traits"`
+		} `json:"identity"`
+	}
+	st, _ := JSON(t, nil, "GET", e.KratosPublic+"/sessions/whoami", http.Header{"X-Session-Token": {sessionToken}}, nil, &out)
+	if st != 200 || out.Identity.Traits.LoginID == "" {
+		t.Fatalf("whoami: %d", st)
+	}
+	return out.Identity.Traits.LoginID
 }
 
 // RegisterCustomerTraits submits a native registration with arbitrary traits
@@ -246,6 +266,17 @@ func (e Env) LoginAPI(t *testing.T, email string) (int, Flow) {
 	var out Flow
 	st, _ := JSON(t, nil, "POST", e.KratosPublic+"/self-service/login?flow="+flow.ID, nil,
 		map[string]any{"method": "password", "identifier": email, "password": Password}, &out)
+	return st, out
+}
+
+// LoginCustomerAPI signs a customer in through identity-service
+// (POST /v1/auth/login, ADR-0014).
+func (e Env) LoginCustomerAPI(t *testing.T, email string) (int, Flow) {
+	t.Helper()
+	var out Flow
+	st, _ := JSON(t, nil, "POST", e.API+"/v1/auth/login", nil, map[string]any{
+		"login": map[string]any{"type": "email", "value": email}, "password": Password,
+	}, &out)
 	return st, out
 }
 
@@ -395,14 +426,35 @@ func (e Env) mailIDs(t *testing.T, addr string) []string {
 
 // VerifyEmail runs a native verification flow: request a code, read it from
 // Mailpit, submit it. (The registration response carries no
-// show_verification_ui continue_with in this Kratos config.)
-func (e Env) VerifyEmail(t *testing.T, email string) {
+// show_verification_ui continue_with in this Kratos config.) Codes travel
+// through the Kratos http courier and identity-service (ADR-0013), so the
+// registration mail can land late: wait for it first so its code is not
+// mistaken for ours, and retry with a new flow if the code was not accepted.
+// Kratos is addressed with the owner's handle (sessionToken's whoami).
+func (e Env) VerifyEmail(t *testing.T, email, sessionToken string) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for len(e.mailIDs(t, email)) == 0 && time.Now().Before(deadline) {
+		time.Sleep(300 * time.Millisecond)
+	}
+	for attempt := 1; ; attempt++ {
+		state := e.verifyOnce(t, email, e.Handle(t, sessionToken))
+		if state == "passed_challenge" {
+			return
+		}
+		if attempt == 3 {
+			t.Fatalf("verification not accepted: state %q", state)
+		}
+	}
+}
+
+func (e Env) verifyOnce(t *testing.T, email, handle string) string {
 	t.Helper()
 	before := len(e.mailIDs(t, email))
 	var flow Flow
 	JSON(t, nil, "GET", e.KratosPublic+"/self-service/verification/api", nil, nil, &flow)
 	if st, _ := JSON(t, nil, "POST", e.KratosPublic+"/self-service/verification?flow="+flow.ID, nil,
-		map[string]any{"method": "code", "email": email}, nil); st != 200 {
+		map[string]any{"method": "code", "email": handle}, nil); st != 200 {
 		t.Fatalf("request verification code: %d", st)
 	}
 	var newest string
@@ -425,11 +477,14 @@ func (e Env) VerifyEmail(t *testing.T, email string) {
 	if m == nil {
 		t.Fatal("no code in verification email")
 	}
-	var out Flow
+	var out struct {
+		State string `json:"state"`
+	}
 	if st, _ := JSON(t, nil, "POST", e.KratosPublic+"/self-service/verification?flow="+flow.ID, nil,
 		map[string]any{"method": "code", "code": m[1]}, &out); st != 200 {
-		t.Fatalf("verify: %d %+v", st, out.UI.Messages)
+		t.Fatalf("verify: %d", st)
 	}
+	return out.State
 }
 
 // JWKSURL is Hydra's public key set.

@@ -191,7 +191,7 @@ abstract class AppLocalizations {
   /// No description provided for @verifyEmailTitle.
   ///
   /// In en, this message translates to:
-  /// **'Verify your email'**
+  /// **'Verify your account'**
   String get verifyEmailTitle;
 
   /// No description provided for @verifyEmailBody.
@@ -233,13 +233,13 @@ abstract class AppLocalizations {
   /// No description provided for @recoveryEmailBody.
   ///
   /// In en, this message translates to:
-  /// **'Enter your account email. If it exists we will send a recovery code.'**
+  /// **'Enter your account email or phone number. If an account exists we will send a recovery code.'**
   String get recoveryEmailBody;
 
   /// No description provided for @recoveryCodeBody.
   ///
   /// In en, this message translates to:
-  /// **'Enter the recovery code we emailed you.'**
+  /// **'Enter the recovery code we sent you.'**
   String get recoveryCodeBody;
 
   /// No description provided for @recoveryCode.
@@ -377,7 +377,7 @@ abstract class AppLocalizations {
   /// No description provided for @emailNotVerified.
   ///
   /// In en, this message translates to:
-  /// **'Verify your email address to continue.'**
+  /// **'Verify your email or phone number to continue.'**
   String get emailNotVerified;
 
   /// No description provided for @recoverySessionUnavailable.
@@ -431,13 +431,13 @@ abstract class AppLocalizations {
   /// No description provided for @kratos1080002.
   ///
   /// In en, this message translates to:
-  /// **'Your email address is verified.'**
+  /// **'Your email or phone number is verified.'**
   String get kratos1080002;
 
   /// No description provided for @kratos1080003.
   ///
   /// In en, this message translates to:
-  /// **'We sent a verification code to your email address.'**
+  /// **'We sent you a verification code.'**
   String get kratos1080003;
 
   /// No description provided for @kratos4000002.
@@ -449,25 +449,25 @@ abstract class AppLocalizations {
   /// No description provided for @kratos4000006.
   ///
   /// In en, this message translates to:
-  /// **'The email or password is incorrect.'**
+  /// **'The email/phone number or password is incorrect.'**
   String get kratos4000006;
 
   /// No description provided for @kratos4000007.
   ///
   /// In en, this message translates to:
-  /// **'An account with this email already exists.'**
+  /// **'An account with this email or phone number already exists.'**
   String get kratos4000007;
 
   /// No description provided for @kratos4000010.
   ///
   /// In en, this message translates to:
-  /// **'This account is not active yet. Did you verify your email address?'**
+  /// **'This account is not active yet. Did you verify your email or phone number?'**
   String get kratos4000010;
 
   /// No description provided for @kratos4000031.
   ///
   /// In en, this message translates to:
-  /// **'The password is too similar to your email.'**
+  /// **'The password is too similar to your sign-in details.'**
   String get kratos4000031;
 
   /// No description provided for @kratos4000032.
@@ -709,6 +709,102 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'You must be between 13 and 120 years old.'**
   String get dateOfBirthOutOfRange;
+
+  /// No description provided for @verifyPhoneBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter the code we sent by SMS to {phone}.'**
+  String verifyPhoneBody(String phone);
+
+  /// No description provided for @verifyBodyGeneric.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter the code we sent you.'**
+  String get verifyBodyGeneric;
+
+  /// No description provided for @loginTypeLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in with'**
+  String get loginTypeLabel;
+
+  /// No description provided for @loginTypeEmail.
+  ///
+  /// In en, this message translates to:
+  /// **'Email'**
+  String get loginTypeEmail;
+
+  /// No description provided for @loginTypePhone.
+  ///
+  /// In en, this message translates to:
+  /// **'Phone'**
+  String get loginTypePhone;
+
+  /// No description provided for @loginPhoneHint.
+  ///
+  /// In en, this message translates to:
+  /// **'0901234567 or +84901234567'**
+  String get loginPhoneHint;
+
+  /// No description provided for @loginInvalidEmail.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a valid email address.'**
+  String get loginInvalidEmail;
+
+  /// No description provided for @loginInvalidPhone.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a valid phone number, e.g. 0901234567 or +84901234567.'**
+  String get loginInvalidPhone;
+
+  /// No description provided for @loginUnsupportedCountry.
+  ///
+  /// In en, this message translates to:
+  /// **'Phone numbers from this country are not supported yet.'**
+  String get loginUnsupportedCountry;
+
+  /// No description provided for @rateLimited.
+  ///
+  /// In en, this message translates to:
+  /// **'Too many attempts. Please wait a moment and try again.'**
+  String get rateLimited;
+
+  /// No description provided for @rateLimitedRetryAfter.
+  ///
+  /// In en, this message translates to:
+  /// **'Too many attempts. Please try again in {seconds} seconds.'**
+  String rateLimitedRetryAfter(int seconds);
+
+  /// No description provided for @rateLimitedRetryAfterMinutes.
+  ///
+  /// In en, this message translates to:
+  /// **'Too many attempts. Please try again in {minutes, plural, =1{1 minute} other{{minutes} minutes}}.'**
+  String rateLimitedRetryAfterMinutes(int minutes);
+
+  /// No description provided for @rateLimitedRetryAfterHours.
+  ///
+  /// In en, this message translates to:
+  /// **'Too many attempts. Please try again in {hours, plural, =1{1 hour} other{{hours} hours}}.'**
+  String rateLimitedRetryAfterHours(int hours);
+
+  /// No description provided for @passwordHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Don\'t use your email address or phone number in your password.'**
+  String get passwordHint;
+
+  /// No description provided for @kratos4049001.
+  ///
+  /// In en, this message translates to:
+  /// **'This app version is out of date. Please update the app and try again.'**
+  String get kratos4049001;
+
+  /// No description provided for @kratos4049002.
+  ///
+  /// In en, this message translates to:
+  /// **'We couldn\'t confirm your email or phone number. Please try again.'**
+  String get kratos4049002;
 }
 
 class _AppLocalizationsDelegate

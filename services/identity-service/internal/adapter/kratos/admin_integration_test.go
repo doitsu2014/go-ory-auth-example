@@ -12,6 +12,7 @@ import (
 
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/app"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/identity"
+	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/login"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/testutil/itest"
 )
 
@@ -111,7 +112,8 @@ func TestFR08_VerifierAgainstKratos(t *testing.T) {
 	v := NewSessionVerifier(env.KratosPublic, nil, nil)
 	ctx := context.Background()
 	p, err := v.Verify(ctx, app.Credential{Kind: app.CredentialToken, Value: reg.SessionToken})
-	if err != nil || p.Kind != identity.KindCustomer || p.Email != email || p.EmailVerified || p.AAL != identity.AAL1 || p.SessionID == uuid.Nil {
+	if err != nil || p.Kind != identity.KindCustomer || p.Email != "" || !login.IsPseudonym(p.LoginID) ||
+		p.EmailVerified || p.AAL != identity.AAL1 || p.SessionID == uuid.Nil {
 		t.Fatalf("verify: %+v %v", p, err)
 	}
 	if _, err := v.Verify(ctx, app.Credential{Kind: app.CredentialToken, Value: "ory_st_invalid"}); !errors.Is(err, app.ErrUnauthenticated) {

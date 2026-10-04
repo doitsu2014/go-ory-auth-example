@@ -51,10 +51,33 @@ class Jar {
   }
 }
 
-// The customer schema holds the email only; the real name is encrypted
-// personal info (NAME-FR-01).
+// Customer login, registration and recovery go through identity-service
+// (ADR-0014): it finds the opaque Kratos handle of the address and drives the
+// Kratos native flow. Kratos never receives the address itself.
+// Kratos answers 500 (→ 503) when its HaveIBeenPwned lookup times out; retry.
+async function customerAuth(path, body) {
+  let out;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const res = await fetch(`${API}/v1/auth/${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(body),
+    });
+    out = { status: res.status, body: await json(res), text: "" };
+    if (res.status < 500) break;
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  out.text = JSON.stringify(out.body);
+  return out;
+}
+
+// A well-formed handle identity-service never stored.
+const randomHandle = () => `${randomBytes(32).toString("hex").replace(/[^a-z2-7]/g, "a").slice(0, 52)}@login.invalid`;
+
+// The customer schema holds the pseudonymous login_id only; the real name is
+// encrypted personal info (NAME-FR-01).
 // Kratos answers 500 when its HaveIBeenPwned lookup times out; retry a few times.
-async function nativeRegister(email, password, traits = { email }) {
+async function nativeRegister(loginId, password, traits = { login_id: loginId }) {
   let out;
   for (let attempt = 0; attempt < 3; attempt++) {
     const flow = await json(await fetch(`${KRATOS}/self-service/registration/api`));
@@ -118,13 +141,22 @@ async function latestCodeFor(email, after = 0) {
 }
 
 // Raw row from the identity DB as text, read through the postgres container.
-function rawIdentityRow(sql) {
+function rawIdentityRow(sql, db = "identity") {
   try {
     return execFileSync("docker", ["compose", "--env-file", "deploy/compose/.env", "-f", "deploy/compose/docker-compose.yml",
-      "exec", "-T", "postgres", "psql", "-U", "postgres", "-d", "identity", "-Atc", sql], { encoding: "utf8" });
+      "exec", "-T", "postgres", "psql", "-U", "postgres", "-d", db, "-Atc", sql], { encoding: "utf8" });
   } catch {
     return null;
   }
+}
+
+// PLI-NFR-01: no Kratos table that holds identifiers contains the address.
+function kratosHolds(value) {
+  const tables = ["identities", "identity_credential_identifiers", "identity_verifiable_addresses",
+    "identity_recovery_addresses", "courier_messages"];
+  const q = tables.map((t) => `SELECT count(*) FROM ${t} x WHERE x::text ILIKE '%' || $$${value}$$ || '%'`).join(" UNION ALL ");
+  const out = rawIdentityRow(`SELECT sum(count) FROM (${q}) c`, "kratos");
+  return out === null ? null : Number(out.trim());
 }
 
 // Encrypted personal information (PII-FR-01/02/04, PII-NFR-04, NAME-FR-02/03).
@@ -231,25 +263,39 @@ async function main() {
   const email = `smoke-${randomUUID()}@example.local`;
   const password = strongPassword();
   let currentPassword = password;
-  const nameEmail = `smoke-name-${randomUUID()}@example.local`;
-  const withName = await nativeRegister(nameEmail, password, { email: nameEmail, name: { first: "Smoke", last: "Test" } });
+  const withName = await nativeRegister(null, password, { login_id: randomHandle(), name: { first: "Smoke", last: "Test" } });
   check("NAME-FR-01 native registration with traits.name is rejected (400)", withName.status === 400, `status ${withName.status}`);
   if (withName.body.identity?.id) created.push(withName.body.identity.id);
-  const reg = await nativeRegister(email, password);
-  check("FR-01 native registration returns a session token", reg.status === 200 && !!reg.body.session_token, `status ${reg.status}`);
+  const plain = await nativeRegister(null, password, { email: `smoke-plain-${randomUUID()}@example.local` });
+  check("PLI-FR-04 registration with a plaintext email is rejected (4049001)", plain.status === 400 &&
+    JSON.stringify(plain.body).includes("4049001"), `status ${plain.status}`);
+  const unresolved = await nativeRegister(randomHandle(), password);
+  check("PLI-FR-04 direct Kratos registration with a handle identity-service did not store is rejected (4049002)", unresolved.status === 400 &&
+    JSON.stringify(unresolved.body).includes("4049002"), `status ${unresolved.status}`);
+  const oldResolve = await fetch(`${API}/v1/auth/identifiers`, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type: "email", value: email, purpose: "sign_in" }) });
+  check("PLX-FR-05 the resolve endpoint is gone (404)", oldResolve.status === 404, `status ${oldResolve.status}`);
+  const reg = await customerAuth("registration", { login: { type: "email", value: email.toUpperCase() }, password });
+  const loginId = reg.body.session?.identity?.traits?.login_id;
+  check("PLX-FR-02 registration through identity-service returns a session token", reg.status === 200 && !!reg.body.session_token, `status ${reg.status} ${reg.body.code ?? ""}`);
+  check("PLX-FR-04 Kratos handle is opaque", /^[a-z2-7]{52}@login\.invalid$/.test(loginId ?? ""), String(loginId));
   const token = reg.body.session_token;
-  const customerId = reg.body.identity?.id;
+  const customerId = reg.body.session?.identity?.id;
   if (customerId) created.push(customerId);
   if (customerId) {
     const k = await json(await fetch(`${KRATOS_ADMIN}/admin/identities/${customerId}`));
-    check("NAME-FR-01 Kratos traits hold the email only", k.traits?.email === email && !("name" in (k.traits ?? {})) &&
+    check("PLI-FR-03 Kratos traits hold the handle only", k.traits?.login_id === loginId && !("email" in (k.traits ?? {})) &&
       Object.keys(k.traits ?? {}).length === 1, `keys ${Object.keys(k.traits ?? {}).join(",")}`);
   }
+  const dup = await customerAuth("registration", { login: { type: "email", value: email }, password });
+  check("PLX-FR-02 duplicate registration is rejected (4000007)", dup.status === 400 && dup.body.code === "auth_flow_rejected" &&
+    dup.text.includes("4000007"), `status ${dup.status}`);
 
   // ---- Customer: API with bearer (FR-08/FR-09) ----
   let res = await fetch(`${API}/v1/me`, { headers: { Authorization: `Bearer ${token}` } });
   let me = await json(res);
   check("FR-08/09 GET /v1/me with bearer token", res.status === 200 && me.email === email, `status ${res.status}`);
+  check("PLI-FR-07 GET /v1/me returns the decrypted login", me.login?.type === "email" && me.login?.value === email, JSON.stringify(me.login ?? {}));
 
   res = await fetch(`${API}/v1/me`);
   check("FR-08 GET /v1/me without credential is 401", res.status === 401);
@@ -275,10 +321,11 @@ async function main() {
   await fetch(`${KRATOS}/self-service/verification?flow=${vflowId}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({ method: "code", email }),
+    // The signed-in owner addresses Kratos with their own handle (whoami).
+    body: JSON.stringify({ method: "code", email: loginId }),
   });
   const code = await latestCodeFor(email, before);
-  check("FR-03 verification code delivered to Mailpit", !!code && !!vflowId);
+  check("FR-03 / PLI-FR-05 verification code delivered to the real address", !!code && !!vflowId);
   if (code && vflowId) {
     res = await fetch(`${KRATOS}/self-service/verification?flow=${vflowId}`, {
       method: "POST",
@@ -290,8 +337,14 @@ async function main() {
   }
 
   // The session cache may hold the pre-verification session for <= 30 s; log in again for a fresh session.
-  const login = await nativeLogin(email, password);
-  check("FR-02 native login (customer, API flow) allowed", login.status === 200 && !!login.body.session_token, `status ${login.status}`);
+  const login = await customerAuth("login", { login: { type: "email", value: ` ${email.toUpperCase()} ` }, password });
+  check("PLX-FR-01 login through identity-service with the email", login.status === 200 && !!login.body.session_token, `status ${login.status}`);
+  const wrong = await customerAuth("login", { login: { type: "email", value: email }, password: "not the password at all" });
+  const unknown = await customerAuth("login", { login: { type: "email", value: `smoke-nobody-${randomUUID()}@example.local` }, password });
+  const shape = (r) => JSON.stringify({ s: r.status, c: r.body.code, e: r.body.errors });
+  check("PLX-FR-01 wrong password and unknown address are rejected identically", wrong.status === 400 && shape(wrong) === shape(unknown) &&
+    wrong.text.includes("4000006"), `${shape(wrong)} vs ${shape(unknown)}`);
+  check("PLX-FR-06 rejections never carry a handle", ![wrong, unknown, dup].some((r) => r.text.includes("login.invalid")));
   if (login.body.session_token) {
     res = await fetch(`${API}/v1/me`, {
       method: "PATCH",
@@ -305,24 +358,24 @@ async function main() {
     if (customerId) await m2mChecks(customerId, login.body.session_token);
   }
 
-  // ---- Customer: native password recovery (FR-04) ----
-  const rflow = await json(await fetch(`${KRATOS}/self-service/recovery/api`));
+  // ---- Customer: password recovery (FR-04, PLX-FR-03) ----
   const beforeRec = await mailCount(email);
-  await fetch(`${KRATOS}/self-service/recovery?flow=${rflow.id}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({ method: "code", email }),
-  });
+  const rstart = await customerAuth("recovery", { login: { type: "email", value: email } });
+  const rnone = await customerAuth("recovery", { login: { type: "email", value: `smoke-nobody-${randomUUID()}@example.local` } });
+  check("PLX-FR-03 recovery starts through identity-service, same answer for unknown addresses",
+    rstart.status === 200 && rnone.status === 200 && !!rstart.body.recovery_id && !!rnone.body.recovery_id &&
+    Object.keys(rstart.body).join() === Object.keys(rnone.body).join(), `status ${rstart.status}/${rnone.status}`);
+  check("PLX-FR-03 recovery never hands out a Kratos flow id", !("flow_id" in rstart.body) &&
+    !/[0-9a-f]{8}-[0-9a-f]{4}-/.test(rstart.text), rstart.text.slice(0, 40));
+  const forged = await customerAuth("recovery/code", { recovery_id: "vault:v1:Zm9yZ2Vk", code: "123456" });
+  check("PLX-FR-03 a forged recovery_id is rejected (422)", forged.status === 422, `status ${forged.status}`);
   const rcode = await latestCodeFor(email, beforeRec);
-  res = await fetch(`${KRATOS}/self-service/recovery?flow=${rflow.id}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({ method: "code", code: rcode }),
-  });
-  const rec = await json(res);
-  const recToken = rec.continue_with?.find((c) => c.action === "set_ory_session_token")?.ory_session_token;
-  const settingsId = rec.continue_with?.find((c) => c.action === "show_settings_ui")?.flow?.id;
-  check("FR-04 native recovery returns a privileged session token + settings flow", !!recToken && !!settingsId, `status ${res.status}`);
+  const wrongCode = await customerAuth("recovery/code", { recovery_id: rstart.body.recovery_id, code: rcode === "000000" ? "111111" : "000000" });
+  check("PLX-FR-03 wrong recovery code is rejected (4060006)", wrongCode.status === 400 && wrongCode.text.includes("4060006"), `status ${wrongCode.status}`);
+  const grant = await customerAuth("recovery/code", { recovery_id: rstart.body.recovery_id, code: rcode });
+  const recToken = grant.body.session_token;
+  const settingsId = grant.body.settings_flow_id;
+  check("FR-04 recovery code returns a privileged session token + settings flow", grant.status === 200 && !!recToken && !!settingsId, `status ${grant.status} ${grant.body.code ?? ""}`);
   const newPassword = strongPassword();
   if (recToken && settingsId) {
     res = await fetch(`${KRATOS}/self-service/settings?flow=${settingsId}`, {
@@ -331,13 +384,29 @@ async function main() {
       body: JSON.stringify({ method: "password", password: newPassword }),
     });
     check("FR-04 new password set via settings flow", res.status === 200, `status ${res.status}`);
-    const relogin = await nativeLogin(email, newPassword);
+    const relogin = await customerAuth("login", { login: { type: "email", value: email }, password: newPassword });
     check("FR-04 login with the new password", relogin.status === 200, `status ${relogin.status}`);
     if (relogin.status === 200) currentPassword = newPassword;
   }
 
   // ---- Population guard (ADR-0004) ----
-  const custBrowser = await browserLogin(email, currentPassword);
+  const custBrowser = await browserLogin(loginId, currentPassword);
+
+  // ---- Phone login through the SMS sink (PLI-FR-05/08) ----
+  const phone = `+849${Math.floor(10000000 + Math.random() * 89999999)}`;
+  const preg = await customerAuth("registration", { login: { type: "phone", value: phone.replace("+84", "0") }, password });
+  if (preg.body.session?.identity?.id) created.push(preg.body.session.identity.id);
+  const sink = `${phone.slice(1)}@sms.local`;
+  const pcode = await latestCodeFor(sink);
+  check("PLI-FR-05 phone registration: code delivered as SMS (local sink)", preg.status === 200 && !!pcode, `status ${preg.status}`);
+  const pme = await json(await fetch(`${API}/v1/me`, { headers: { Authorization: `Bearer ${preg.body.session_token}` } }));
+  check("PLI-FR-07 phone customer: /v1/me login is the phone, no email", pme.login?.type === "phone" && pme.login?.value === phone && !("email" in pme), JSON.stringify(pme.login ?? {}));
+
+  // ---- No customer address in the Kratos database (PLI-NFR-01) ----
+  for (const [label, v] of [["email", email], ["phone", phone.slice(3)]]) {
+    const n = kratosHolds(v);
+    check(`PLI-NFR-01 Kratos tables hold no customer ${label}`, n === 0, n === null ? "psql unavailable" : `${n} rows`);
+  }
   check("Guard: customer cannot log in via browser flow", custBrowser.status >= 400, `status ${custBrowser.status}`);
 
   const adminEmail = `smoke-admin-${randomUUID()}@example.local`;

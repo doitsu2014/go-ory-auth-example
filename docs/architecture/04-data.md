@@ -5,7 +5,8 @@
 | Data | Source of truth | Others may |
 | --- | --- | --- |
 | Credentials, MFA secrets, sessions | Kratos (`kratos` DB) | Nothing — never read |
-| Traits (customer: email only; admin: email, name) | Kratos | Read via Kratos API (session payload or admin API) |
+| Traits (customer: pseudonymous `login_id` only; admin: email, name) | Kratos | Read via Kratos API (session payload or admin API) |
+| Customer login identifier (email or phone) | identity-service, encrypted (`login_identifier`) | Found by its HMAC lookup key at `POST /v1/auth/{login,registration,recovery}` (never returned to clients); owner via `/v1/me`; admins masked / reveal (ADR-0013, ADR-0014) |
 | Customer personal info (name, phone, DOB, address, national id) | identity-service, encrypted (`customer_pii`) | Read via `/v1/me/personal-info`; admins masked / reveal ([08](08-pii-protection.md)) |
 | Identity state (active / inactive) | Kratos | Change via Kratos admin API |
 | Roles / permissions | Keto (`keto` DB) | Check / write via Keto API |
@@ -48,30 +49,39 @@ idle-in-transaction timeout 10 s.
 
 ```json
 {
-  "$id": "https://schemas.example.com/customer.v1.json",
+  "$id": "https://schemas.go-ory-auth-example.local/customer.v2.json",
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Customer",
+  "title": "Customer (v2)",
   "type": "object",
   "properties": {
     "traits": {
       "type": "object",
       "properties": {
-        "email": {
-          "type": "string", "format": "email", "maxLength": 320,
-          "title": "Email",
+        "login_id": {
+          "type": "string", "format": "email", "maxLength": 66,
+          "pattern": "^[a-z2-7]{52}@login\\.invalid$",
+          "title": "Login",
           "ory.sh/kratos": {
-            "credentials": { "password": { "identifier": true }, "code": { "identifier": true, "via": "email" } },
+            "credentials": { "password": { "identifier": true } },
             "verification": { "via": "email" },
             "recovery": { "via": "email" }
           }
         }
       },
-      "required": ["email"],
+      "required": ["login_id"],
       "additionalProperties": false
     }
   }
 }
 ```
+
+`login_id` is an opaque handle for the customer's email or phone. Handles
+are random since ADR-0014; older ones are the HMAC of the address
+([ADR-0013](../adr/0013-pseudonymous-customer-login-identifiers.md),
+[ADR-0014](../adr/0014-customer-login-through-identity-service.md),
+[08 §8.12](08-pii-protection.md#812-login-identifiers-adr-0013)). During the
+migration window Kratos uses `customer.v2.transition.json`, which accepts
+`login_id` or the legacy `email`, never both.
 
 `admin` — `selfservice_selectable: false` (created only through the admin API).
 Traits `email` and `name` (the customer schema has no `name`: a customer's
@@ -87,14 +97,14 @@ identity:
   default_schema_id: customer
   schemas:
     - id: customer
-      url: file:///etc/config/kratos/identity-schemas/customer.v1.json
+      url: file:///etc/config/kratos/identity-schemas/customer.v2.json   # transition file during the migration window
       selfservice_selectable: true
     - id: admin
       url: file:///etc/config/kratos/identity-schemas/admin.v1.json
       selfservice_selectable: false
 ```
 
-Schema evolution: schemas are versioned files (`customer.v1.json`,
+Schema evolution: schemas are versioned files (`customer.v2.transition.json`,
 `customer.v2.json`). Add a new schema id for breaking changes and migrate
 identities via the admin API; never edit a schema in a way that invalidates
 existing identities.
@@ -171,6 +181,17 @@ Design notes (from the team's PostgreSQL rules):
 `identity_app` can SELECT, INSERT, UPDATE and DELETE on `subject_key`, but
 only SELECT, INSERT and UPDATE on `customer_pii`. Details are in
 [08-pii-protection](08-pii-protection.md).
+
+### Login identifiers (migrations 0006, 0007; ADR-0013, ADR-0014)
+
+| Table | Holds | Notes |
+| --- | --- | --- |
+| `login_identifier` | `pseudonym` (32-byte Kratos handle, PK; random since 0007), `lookup_key` (32-byte HMAC of the address, unique; backfilled `= pseudonym` by 0007), `kind` (`email`\|`phone`), `value_ct` (`vault:vN:…`), `kek_version`, `identity_id` (unique, NULL until bound), `bound_at`, `legacy_verified`, `created_at`, `last_validated_at` | The address behind each Kratos `login_id`. Unbound rows older than 24 h without an identity are purged |
+| `courier_dispatch` | `dedupe_key` (keyed hash of template, recipient, code), `state` (`pending`\|`sent`), timestamps | Kratos courier de-duplication. Rows are deleted after 24 h |
+
+`identity_app` cannot change a row's `pseudonym`, `lookup_key`, `kind` or
+`created_at` (column grants). The re-key CLI, when built, will need UPDATE on
+`lookup_key`.
 
 ## 4.5 Data lifecycle
 

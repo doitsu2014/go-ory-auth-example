@@ -1,19 +1,21 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_ory_auth_mobile/app/providers.dart';
 import 'package:go_ory_auth_mobile/app/routes.dart';
+import 'package:go_ory_auth_mobile/core/identity/customer_auth_client.dart';
+import 'package:go_ory_auth_mobile/core/identity/login_input.dart';
 import 'package:go_ory_auth_mobile/core/kratos/kratos_models.dart';
 import 'package:go_ory_auth_mobile/features/auth/presentation/widgets/flow_form.dart';
+import 'package:go_ory_auth_mobile/features/auth/presentation/widgets/login_identifier_field.dart';
 import 'package:go_ory_auth_mobile/l10n/gen/app_localizations.dart';
 import 'package:go_router/go_router.dart';
 
-/// Native registration flow: `{method: password, traits{email}, password}`.
-/// The name is not asked here: it is personal info, entered on the
-/// personal-info screen after email verification. On success the session
-/// token is stored and the router follows `continue_with` to the
-/// verify-email screen.
+/// Registration with email / phone number and password: one call to
+/// identity-service, which stores the address encrypted under a new opaque
+/// handle and runs the Kratos native registration flow with it (ADR-0014,
+/// PLX-FR-02). The name is not asked here: it is personal info, entered on
+/// the personal-info screen after verification. On success the session
+/// token is stored and the router goes to the verify screen.
 class SignUpScreen extends ConsumerStatefulWidget {
   const SignUpScreen({super.key});
 
@@ -23,38 +25,41 @@ class SignUpScreen extends ConsumerStatefulWidget {
 
 class _SignUpScreenState extends ConsumerState<SignUpScreen>
     with FlowFormMixin {
-  static const _bound = {'traits.email', 'password', 'csrf_token', 'method'};
-  final _email = TextEditingController();
+  static const Set<String> _bound = {
+    AuthFlowFields.login,
+    AuthFlowFields.password,
+  };
+  final _login = TextEditingController();
   final _password = TextEditingController();
+  LoginType _loginType = LoginType.email;
 
-  @override
-  Future<KratosFlow> Function() get createFlow =>
-      ref.read(authRepositoryProvider).startRegistration;
+  /// Client-side format check result (UX only).
+  String? _loginCode;
 
+  /// No Kratos flow on the device: identity-service creates it.
   @override
-  void initState() {
-    super.initState();
-    unawaited(loadFlow());
-  }
+  Future<KratosFlow> Function()? get createFlow => null;
 
   @override
   void dispose() {
-    for (final c in [_email, _password]) {
+    for (final c in [_login, _password]) {
       c.dispose();
     }
     super.dispose();
   }
 
-  Future<void> _submit() => runSubmit((flow) async {
-    final outcome = await ref
-        .read(authRepositoryProvider)
-        .register(
-          flowId: flow!.id,
-          email: _email.text.trim(),
-          password: _password.text,
-        );
-    ref.read(authControllerProvider.notifier).registered(outcome);
-  });
+  Future<void> _submit() async {
+    final login = LoginInput(type: _loginType, value: _login.text);
+    final code = login.validate();
+    setState(() => _loginCode = code);
+    if (code != null) return;
+    await runSubmit((_) async {
+      final outcome = await ref
+          .read(authRepositoryProvider)
+          .register(login: login, password: _password.text);
+      ref.read(authControllerProvider.notifier).registered(outcome);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -62,16 +67,27 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
     return FormPage(
       title: l10n.signUp,
       children: [
-        FailureBanner(failure: failure, onRetry: loadFlow),
+        FailureBanner(failure: failure, onRetry: _submit),
         FlowMessages(messages: globalMessages(_bound)),
-        TextField(
-          key: const Key('signUp.email'),
-          controller: _email,
-          keyboardType: TextInputType.emailAddress,
-          autofillHints: const [AutofillHints.email],
-          decoration: InputDecoration(
-            labelText: l10n.email,
-            errorText: fieldError(context, 'traits.email'),
+        LoginIdentifierField(
+          keyPrefix: 'signUp',
+          controller: _login,
+          type: _loginType,
+          textInputAction: TextInputAction.next,
+          onTypeChanged: (t) => setState(() {
+            _loginType = t;
+            _loginCode = null;
+          }),
+          onChanged: (_) {
+            // The format error described the previous value.
+            if (_loginCode != null) setState(() => _loginCode = null);
+          },
+          errorText: loginErrorText(
+            l10n,
+            _loginType,
+            localCode: _loginCode,
+            failure: failure,
+            kratosError: fieldError(context, AuthFlowFields.login),
           ),
         ),
         TextField(
@@ -81,7 +97,11 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
           autofillHints: const [AutofillHints.newPassword],
           decoration: InputDecoration(
             labelText: l10n.password,
-            errorText: fieldError(context, 'password'),
+            // R-06: the password must not contain the email / phone (Kratos
+            // only sees the handle, so it cannot check this itself).
+            helperText: l10n.passwordHint,
+            helperMaxLines: 2,
+            errorText: fieldError(context, AuthFlowFields.password),
           ),
         ),
         SubmitButton(
