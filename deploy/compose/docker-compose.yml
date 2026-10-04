@@ -7,7 +7,6 @@ x-kratos-env: &kratos-env
   SECRETS_COOKIE: ${KRATOS_SECRETS_COOKIE_VALUE}
   SECRETS_CIPHER: ${KRATOS_SECRETS_CIPHER_VALUE}
   SECRETS_DEFAULT: ${KRATOS_SECRETS_DEFAULT_VALUE}
-  COURIER_SMTP_CONNECTION_URI: smtp://mailpit:1025/?skip_ssl_verify=true&disable_starttls=true
 
 services:
   postgres:
@@ -43,13 +42,15 @@ services:
     image: alpine:3.22
     environment:
       KRATOS_WEBHOOK_API_KEY: ${KRATOS_WEBHOOK_API_KEY:?}
+      KRATOS_COURIER_API_KEY: ${KRATOS_COURIER_API_KEY:?}
       IDENTITY_WEBHOOK_BASE_URL: ${IDENTITY_WEBHOOK_BASE_URL:-http://identity-service:8081}
     command:
       - sh
       - -c
       - >
-        test -n "$$KRATOS_WEBHOOK_API_KEY" &&
+        test -n "$$KRATOS_WEBHOOK_API_KEY" && test -n "$$KRATOS_COURIER_API_KEY" &&
         sed -e "s|__KRATOS_WEBHOOK_API_KEY__|$$KRATOS_WEBHOOK_API_KEY|g"
+        -e "s|__KRATOS_COURIER_API_KEY__|$$KRATOS_COURIER_API_KEY|g"
         -e "s|__IDENTITY_WEBHOOK_BASE_URL__|$$IDENTITY_WEBHOOK_BASE_URL|g"
         /tmpl/kratos.yml.tmpl > /rendered/kratos.yml
     volumes:
@@ -238,6 +239,14 @@ services:
       KETO_READ_URL: http://keto:4466
       KETO_WRITE_URL: http://keto:4467
       KRATOS_WEBHOOK_API_KEY: ${KRATOS_WEBHOOK_API_KEY:?}
+      # Pseudonymous login identifiers (ADR-0013).
+      KRATOS_COURIER_API_KEY: ${KRATOS_COURIER_API_KEY:?}
+      COURIER_DEDUPE_SECRET: ${COURIER_DEDUPE_SECRET:?}
+      LOGIN_MIGRATION_PHASE: ${LOGIN_MIGRATION_PHASE:-transition}
+      SMS_PROVIDER: sink
+      # Local only: seeding and the smoke test register many customers from
+      # one host address; production keeps the defaults (5/1m, 30/24h).
+      LOGIN_REGISTER_RATE: 60/1m,1000/24h
       CORS_ALLOWED_ORIGINS: http://localhost:5173
       SMTP_URL: smtp://mailpit:1025
       SMTP_FROM: no-reply@go-ory-auth-example.local

@@ -11,3 +11,15 @@ path "transit/keys/identity-pii-kek/config" {
     "auto_rotate_period"     = []
   }
 }
+
+# Login identifier vault key (ADR-0013): same rotation/retirement rights.
+# The login pseudonym HMAC key is deliberately absent: it is never rotated.
+path "transit/keys/identity-login-kek/rotate" { capabilities = ["update"] }
+path "transit/keys/identity-login-kek"        { capabilities = ["read"] }
+path "transit/keys/identity-login-kek/config" {
+  capabilities       = ["update"]
+  allowed_parameters = {
+    "min_decryption_version" = []
+    "auto_rotate_period"     = []
+  }
+}

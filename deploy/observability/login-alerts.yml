@@ -1,0 +1,36 @@
+# Prometheus alert rules for pseudonymous login identifiers (ADR-0013,
+# A3/A8, SEC-C11). Load into the production Prometheus/Alertmanager; the
+# local compose stack has no Prometheus.
+groups:
+  - name: identity-login
+    rules:
+      - alert: IdentityCourierDropsHigh
+        expr: sum by (reason) (rate(identity_courier_dispatch_total{outcome="dropped"}[10m])) > 0.2
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Courier drops ({{ $labels.reason }}) above 12/min"
+          description: "over_quota/provider_rejected spikes mean SMS pumping, mail bombing or a provider problem; unresolved/unbindable mean a vault/binding defect."
+      - alert: IdentityCourierErrors
+        expr: sum(rate(identity_courier_dispatch_total{outcome="error"}[5m])) > 0
+        for: 15m
+        labels: { severity: critical }
+        annotations:
+          summary: "Courier deliveries failing (SMTP/SMS/OpenBao); Kratos is retrying and codes are delayed"
+      - alert: IdentitySMSBudgetNearlyExhausted
+        expr: sum(increase(identity_courier_dispatch_total{outcome="sent",channel="sms"}[24h])) > 800
+        labels: { severity: warning }
+        annotations:
+          summary: "More than 80% of SMS_DAILY_BUDGET (default 1000) used in 24h"
+      - alert: IdentityUnboundLoginsHigh
+        expr: identity_login_unbound_rows > 10000
+        for: 30m
+        labels: { severity: warning }
+        annotations:
+          summary: "Many unclaimed login identifiers: possible resolve abuse (registration purpose)"
+      - alert: IdentityPreRegistrationErrors
+        expr: sum(rate(identity_login_preregistration_total{result="error"}[5m])) > 0
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: "Pre-registration webhook failing: customer sign-ups are rejected"

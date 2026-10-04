@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 // Seeds demo customers through the real flows, so their personal information
 // is encrypted exactly as for a real user:
-//   Kratos native registration -> email verification (code from Mailpit)
-//   -> native login -> PATCH /v1/me (nickname) -> PUT /v1/me/personal-info
+//   resolve the login (POST /v1/auth/identifiers) -> Kratos native
+//   registration with the pseudonym -> verification (code from Mailpit; SMS
+//   to the local sink <digits>@sms.local) -> native login -> PATCH /v1/me
+//   (nickname) -> PUT /v1/me/personal-info
 //
-// The real name is personal information: it is stored encrypted through
-// PUT /v1/me/personal-info, never as a Kratos trait (the customer schema
-// holds the email only), and display_name is a nickname, not the name.
+// Kratos never sees the email or phone number (ADR-0013): it stores only the
+// pseudonym. The real name is personal information, stored encrypted through
+// PUT /v1/me/personal-info; display_name is a nickname, not the name.
 //
 //   node scripts/seed-customers.mjs        (or: ./dev seed-customers)
 //
@@ -21,6 +23,7 @@ const MAILPIT = process.env.MAILPIT_URL ?? "http://localhost:8025";
 const PASSWORD = process.env.SEED_CUSTOMER_PASSWORD ?? `Seed-${randomBytes(9).toString("base64url")}`;
 
 // Fictional people and numbers (national ids use the 0790000000xx range).
+// The last customer signs in with a phone number (SMS through the local sink).
 const CUSTOMERS = [
   { first: "An", last: "Nguyễn Văn", phone: "+84 901 234 501", dob: "1990-05-17", city: "Ho Chi Minh City", line1: "12 Lê Lợi", nid: "079000000001" },
   { first: "Bình", last: "Trần Thị", phone: "+84 912 345 602", dob: "1985-11-02", city: "Hà Nội", line1: "45 Hàng Bài", nid: "001000000002" },
@@ -46,6 +49,21 @@ async function kratosSubmit(kind, body) {
   return { status: res.status, body: await json(res), flowId: flow.id };
 }
 
+// Resolves the login identifier to the pseudonym Kratos knows (ADR-0013).
+async function resolve(login, purpose) {
+  const res = await fetch(`${API}/v1/auth/identifiers`, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ type: login.type, value: login.value, purpose }),
+  });
+  const body = await json(res);
+  if (!res.ok) throw new Error(`resolve ${purpose}: ${res.status} ${body.code ?? ""}`);
+  return body.identifier;
+}
+
+// Where the code arrives in Mailpit: the email itself, or the SMS sink.
+const inbox = (login) => (login.type === "phone" ? `${login.value.replace(/\D/g, "")}@sms.local` : login.value);
+
 async function mails(email) {
   const list = await json(await fetch(`${MAILPIT}/api/v1/search?query=${encodeURIComponent(`to:"${email}"`)}`));
   return list.messages ?? [];
@@ -56,8 +74,9 @@ async function mails(email) {
 async function codeFor(email, since) {
   for (let i = 0; i < 40; i++) {
     for (const m of await mails(email)) {
-      if (Date.parse(m.Created) < since || !/verif/i.test(m.Subject ?? "")) continue;
+      if (Date.parse(m.Created) < since) continue;
       const full = await json(await fetch(`${MAILPIT}/api/v1/message/${m.ID}`));
+      if (!/verif|xác minh|xac minh/i.test(`${m.Subject ?? ""} ${full.Text ?? ""}`)) continue;
       const code = String(full.Text ?? "").match(/\b(\d{6})\b/)?.[1];
       if (code) return code;
     }
@@ -66,16 +85,17 @@ async function codeFor(email, since) {
   throw new Error(`no verification code for ${email}`);
 }
 
-async function verifyEmail(email) {
-  // Let the registration mail land first so it is not mistaken for ours.
+async function verifyLogin(login) {
+  // Let the registration message land first so it is not mistaken for ours.
   await new Promise((r) => setTimeout(r, 1500));
+  const email = await resolve(login, "verification"); // the pseudonym
   const flow = await json(await fetch(`${KRATOS}/self-service/verification/api`));
   const since = Date.now() - 1000;
   await fetch(`${KRATOS}/self-service/verification?flow=${flow.id}`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ method: "code", email }) });
-  const code = await codeFor(email, since);
+  const code = await codeFor(inbox(login), since);
   const res = await fetch(`${KRATOS}/self-service/verification?flow=${flow.id}`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ method: "code", code }) });
   const v = await json(res);
-  if (v.state !== "passed_challenge") throw new Error(`verification failed for ${email}: ${res.status} ${JSON.stringify(v.ui?.messages ?? v.error ?? {})}`);
+  if (v.state !== "passed_challenge") throw new Error(`verification failed for customer: ${res.status} ${JSON.stringify(v.ui?.messages ?? v.error ?? {})}`);
 }
 
 async function call(method, path, token, body) {
@@ -89,11 +109,16 @@ async function call(method, path, token, body) {
 }
 
 async function seedOne(c, i) {
-  const email = `customer${String(i + 1).padStart(2, "0")}@example.local`;
+  const n = String(i + 1).padStart(2, "0");
+  const login = i === CUSTOMERS.length - 1
+    ? { type: "phone", value: `+849000000${n}` }
+    : { type: "email", value: `customer${n}@example.local` };
+  const email = login.value; // printed label only; Kratos never receives it
+  const loginId = await resolve(login, "registration");
   // Kratos answers 500 when its HaveIBeenPwned lookup times out; retry a few times.
   let reg;
   for (let attempt = 0; attempt < 3; attempt++) {
-    reg = await kratosSubmit("registration", { method: "password", password: PASSWORD, traits: { email } });
+    reg = await kratosSubmit("registration", { method: "password", password: PASSWORD, traits: { login_id: loginId } });
     if (reg.status < 500) break;
     await new Promise((r) => setTimeout(r, 2000));
   }
@@ -105,16 +130,16 @@ async function seedOne(c, i) {
   // A late registration mail can still be mistaken for ours; a new flow fixes it.
   for (let attempt = 1; ; attempt++) {
     try {
-      await verifyEmail(email);
+      await verifyLogin(login);
       break;
     } catch (err) {
       if (attempt === 3) throw err;
     }
   }
   // Fresh login: the service may cache the pre-verification session for up to 30 s.
-  const login = await kratosSubmit("login", { method: "password", identifier: email, password: PASSWORD });
-  const token = login.body.session_token;
-  if (!token) throw new Error(`login failed for ${email}: ${login.status}`);
+  const signIn = await kratosSubmit("login", { method: "password", identifier: await resolve(login, "sign_in"), password: PASSWORD });
+  const token = signIn.body.session_token;
+  if (!token) throw new Error(`login failed for ${email}: ${signIn.status}`);
   const nickname = `Khách hàng ${String(i + 1).padStart(2, "0")}`;
   await call("PATCH", "/v1/me", token, { display_name: nickname });
   await call("PUT", "/v1/me/personal-info", token, {
