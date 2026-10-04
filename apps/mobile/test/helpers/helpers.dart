@@ -5,6 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_ory_auth_mobile/app/app.dart';
 import 'package:go_ory_auth_mobile/app/providers.dart';
 import 'package:go_ory_auth_mobile/app/routes.dart';
+import 'package:go_ory_auth_mobile/core/identity/login_identifier_client.dart';
+import 'package:go_ory_auth_mobile/core/identity/login_input.dart';
 import 'package:go_ory_auth_mobile/core/kratos/kratos_client.dart';
 import 'package:go_ory_auth_mobile/core/kratos/kratos_models.dart';
 import 'package:go_ory_auth_mobile/features/auth/data/auth_repository.dart';
@@ -17,6 +19,20 @@ import 'package:mocktail/mocktail.dart';
 class MockKratosClient extends Mock implements KratosClient {}
 
 class MockAuthRepository extends Mock implements AuthRepository {}
+
+class MockLoginIdentifierResolver extends Mock
+    implements LoginIdentifierResolver {}
+
+/// A pseudonym in the contract's shape (`^[a-z2-7]{52}@login\.invalid$`).
+const pseudonym =
+    'l4cwc5fmnvxqxufy7wuuh2mfathke4fvwo3curj5ydaoo3iijsgq@login.invalid';
+
+/// mocktail fallbacks for `any()` on login arguments.
+void registerLoginFallbacks() {
+  registerFallbackValue(const LoginInput(type: LoginType.email, value: ''));
+  registerFallbackValue(const PseudonymousLogin(''));
+  registerFallbackValue(LoginPurpose.signIn);
+}
 
 class MockSettingsRepository extends Mock implements SettingsRepository {}
 
@@ -50,21 +66,20 @@ AuthState authStateOf(WidgetTester tester, Finder finder) =>
     ProviderScope.containerOf(tester.element(finder))
         .read(authControllerProvider);
 
-KratosSession session({
-  String email = 'an@example.com',
-  bool verified = false,
-}) => KratosSession(
-  id: 'sess-1',
-  active: true,
-  identity: KratosIdentity(
-    id: 'id-1',
-    schemaId: 'customer',
-    traits: {'email': email},
-    verifiableAddresses: [
-      VerifiableAddress(value: email, verified: verified, via: 'email'),
-    ],
-  ),
-);
+/// A customer session: `traits.login_id` is the pseudonym (ADR-0013).
+KratosSession session({String loginId = pseudonym, bool verified = false}) =>
+    KratosSession(
+      id: 'sess-1',
+      active: true,
+      identity: KratosIdentity(
+        id: 'id-1',
+        schemaId: 'customer',
+        traits: {'login_id': loginId},
+        verifiableAddresses: [
+          VerifiableAddress(value: loginId, verified: verified, via: 'email'),
+        ],
+      ),
+    );
 
 KratosFlow flowWith({
   String id = 'flow-1',

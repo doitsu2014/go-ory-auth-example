@@ -9,7 +9,7 @@ import 'package:go_ory_auth_mobile/core/network/app_failure.dart';
 import 'package:go_ory_auth_mobile/core/network/problem_mapper.dart';
 import 'package:go_ory_auth_mobile/l10n/gen/app_localizations.dart';
 
-DioException _bad(int status, Object? body) {
+DioException _bad(int status, Object? body, {Headers? headers}) {
   final req = RequestOptions(path: '/x');
   return DioException.badResponse(
     statusCode: status,
@@ -18,6 +18,7 @@ DioException _bad(int status, Object? body) {
       requestOptions: req,
       statusCode: status,
       data: body,
+      headers: headers,
     ),
   );
 }
@@ -137,6 +138,22 @@ void main() {
       expect(f.fieldErrors.single.code, 'too_long');
     });
 
+    test('429 rate_limited keeps Retry-After', () {
+      final f = mapApiError(
+        _bad(
+          429,
+          {'code': 'rate_limited'},
+          headers: Headers.fromMap({
+            'retry-after': ['42'],
+          }),
+        ),
+      ) as ApiFailure;
+      expect(f.code, 'rate_limited');
+      expect(f.retryAfter, const Duration(seconds: 42));
+      expect(parseRetryAfter('soon'), isNull);
+      expect(parseRetryAfter(null), isNull);
+    });
+
     test('401 -> UnauthenticatedFailure', () {
       expect(
         mapApiError(_bad(401, {'code': 'unauthenticated'})),
@@ -181,8 +198,17 @@ void main() {
     test('invalid credentials (4000006) is localised', () {
       expect(
         kratosMessage(vi, err(4000006, 'x')),
-        'Email hoặc mật khẩu không đúng.',
+        'Email/số điện thoại hoặc mật khẩu không đúng.',
       );
+    });
+
+    test('pre-registration webhook ids 4049001 / 4049002 are localised', () {
+      expect(kratosMessage(en, err(4049001, 'x')), en.kratos4049001);
+      expect(kratosMessage(vi, err(4049001, 'x')), vi.kratos4049001);
+      expect(kratosMessage(en, err(4049002, 'x')), en.kratos4049002);
+      expect(kratosMessage(vi, err(4049002, 'x')), vi.kratos4049002);
+      expect(en.kratos4049001, contains('update the app'));
+      expect(vi.kratos4049002, isNot('x'));
     });
 
     test('unknown id falls back to Kratos text', () {
@@ -203,6 +229,43 @@ void main() {
         failureMessage(en, const ApiFailure('dependency_unavailable')),
         en.dependencyUnavailable,
       );
+      expect(
+        failureMessage(en, const ApiFailure('rate_limited')),
+        en.rateLimited,
+      );
+      expect(
+        failureMessage(
+          vi,
+          const ApiFailure('rate_limited', retryAfter: Duration(seconds: 30)),
+        ),
+        vi.rateLimitedRetryAfter(30),
+      );
+      String rate(AppLocalizations l, int seconds) => failureMessage(
+        l,
+        ApiFailure('rate_limited', retryAfter: Duration(seconds: seconds)),
+      );
+      expect(
+        rate(en, 59),
+        'Too many attempts. Please try again in 59 seconds.',
+      );
+      expect(rate(en, 60), 'Too many attempts. Please try again in 1 minute.');
+      expect(rate(en, 90), 'Too many attempts. Please try again in 2 minutes.');
+      expect(
+        rate(en, 3599),
+        'Too many attempts. Please try again in 60 minutes.',
+      );
+      expect(rate(en, 3600), 'Too many attempts. Please try again in 1 hour.');
+      expect(rate(en, 7200), 'Too many attempts. Please try again in 2 hours.');
+      expect(rate(vi, 60), vi.rateLimitedRetryAfterMinutes(1));
+      expect(
+        rate(vi, 60),
+        'Bạn đã thử quá nhiều lần. Vui lòng thử lại sau 1 phút.',
+      );
+      expect(
+        rate(vi, 3600),
+        'Bạn đã thử quá nhiều lần. Vui lòng thử lại sau 1 giờ.',
+      );
+      expect(rate(vi, 45), vi.rateLimitedRetryAfter(45));
       expect(const ApiFailure('dependency_unavailable').isRetryable, isTrue);
       expect(const NetworkFailure().isRetryable, isTrue);
       expect(const ApiFailure('validation_failed').isRetryable, isFalse);

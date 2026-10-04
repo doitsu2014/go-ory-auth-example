@@ -85,20 +85,15 @@ void main() {
       () => settings.changePassword(flowId: 'sf-1', password: 'Str0ng-new-pw!'),
     ).thenThrow(const ApiFailure('session_refresh_required', status: 403));
     when(
-      () => settings.reauthenticate(
-        identifier: 'an@example.com',
-        password: 'wrong',
-      ),
+      () => settings.reauthenticate(identifier: pseudonym, password: 'wrong'),
     ).thenThrow(
       FlowValidationFailure(
         flowWith(id: 'lf-1', messages: [err(4000006, 'invalid')]),
       ),
     );
     when(
-      () => settings.reauthenticate(
-        identifier: 'an@example.com',
-        password: 'old-pass',
-      ),
+      () =>
+          settings.reauthenticate(identifier: pseudonym, password: 'old-pass'),
     ).thenAnswer((_) async {});
     when(
       () => settings.changePassword(flowId: 'sf-2', password: 'Str0ng-new-pw!'),
@@ -114,7 +109,13 @@ void main() {
     );
     await tester.tap(find.byKey(const Key('settings.reauth')));
     await tester.pumpAndSettle();
-    expect(find.text('The email or password is incorrect.'), findsOneWidget);
+    expect(
+      find.text('The email/phone number or password is incorrect.'),
+      findsOneWidget,
+    );
+    // PLI-FR-09: the identifier is the session's login_id (pseudonym); the
+    // customer is never asked for the email / phone again.
+    expect(find.byType(TextField), findsOneWidget);
 
     await tester.enterText(
       find.byKey(const Key('settings.currentPassword')),
@@ -122,6 +123,10 @@ void main() {
     );
     await tester.tap(find.byKey(const Key('settings.reauth')));
     await tester.pumpAndSettle();
+    verify(
+      () =>
+          settings.reauthenticate(identifier: pseudonym, password: 'old-pass'),
+    ).called(1);
     verify(
       () => settings.changePassword(flowId: 'sf-2', password: 'Str0ng-new-pw!'),
     ).called(1);

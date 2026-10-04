@@ -11,9 +11,11 @@ import 'package:go_ory_auth_mobile/core/kratos/kratos_models.dart';
 abstract interface class KratosClient {
   Future<KratosFlow> createRegistrationFlow();
 
+  /// Traits are `{login_id: <pseudonym>}` only (ADR-0013): never the real
+  /// email or phone number.
   Future<NativeAuthResult> submitRegistration({
     required String flowId,
-    required String email,
+    required String loginId,
     required String password,
   });
 
@@ -31,7 +33,8 @@ abstract interface class KratosClient {
 
   Future<KratosFlow> createVerificationFlow();
 
-  /// Sends either `email` (request / resend a code) or `code`.
+  /// Sends either `email` (request / resend a code) or `code`. `email` is the
+  /// pseudonymous login identifier: Kratos never sees the real address.
   Future<KratosFlow> submitVerification({
     required String flowId,
     String? email,
@@ -40,7 +43,8 @@ abstract interface class KratosClient {
 
   Future<KratosFlow> createRecoveryFlow();
 
-  /// Sends either `email` (request a code) or `code`. On a valid code Kratos
+  /// Sends either `email` (the pseudonymous login identifier, to request a
+  /// code) or `code`. On a valid code Kratos
   /// returns the flow with `continue_with` [set_ory_session_token,
   /// show_settings_ui].
   Future<KratosFlow> submitRecovery({

@@ -238,11 +238,21 @@ class KratosIdentity {
   final Json traits;
   final List<VerifiableAddress> verifiableAddresses;
 
-  String get email => traits['email'] as String? ?? '';
+  /// The Kratos login identifier: `traits.login_id` (pseudonym, ADR-0013),
+  /// or the legacy `traits.email` of a not-yet-migrated identity. Used as the
+  /// identifier for Kratos calls only; **never displayed** (the contact
+  /// shown to the user comes from `GET /v1/me`).
+  String get loginId =>
+      traits['login_id'] as String? ?? traits['email'] as String? ?? '';
 
-  bool get emailVerified => verifiableAddresses.any(
-    (a) => a.via == 'email' && a.value == email && a.verified,
-  );
+  /// The login identifier (email or phone behind the pseudonym) is verified.
+  bool get loginVerified =>
+      loginId.isNotEmpty &&
+      verifiableAddresses.any((a) => a.value == loginId && a.verified);
+
+  /// Kept for existing callers: "email verified" now means the login
+  /// identifier is verified.
+  bool get emailVerified => loginVerified;
 }
 
 class KratosSession {

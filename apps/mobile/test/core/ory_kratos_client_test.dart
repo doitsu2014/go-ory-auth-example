@@ -20,7 +20,11 @@ class _Capture extends Interceptor {
 }
 
 void main() {
-  test('registration body carries traits.email only (NAME-FR-09)', () async {
+  const pseudonym =
+      'l4cwc5fmnvxqxufy7wuuh2mfathke4fvwo3curj5ydaoo3iijsgq@login.invalid';
+
+  test('registration body carries traits.login_id only (NAME-FR-09, '
+      'PLI-FR-08)', () async {
     final capture = _Capture();
     final client = OryKratosClient(
       baseUrl: 'http://kratos.invalid',
@@ -29,7 +33,7 @@ void main() {
     await expectLater(
       client.submitRegistration(
         flowId: 'f1',
-        email: 'an@example.com',
+        loginId: pseudonym,
         password: 'pw',
       ),
       throwsA(isA<AppFailure>()),
@@ -38,7 +42,7 @@ void main() {
     final json = (body is Map ? body : <String, dynamic>{})
         .cast<String, dynamic>();
     expect(json['method'], 'password');
-    expect(json['traits'], {'email': 'an@example.com'});
+    expect(json['traits'], {'login_id': pseudonym});
     expect((json['traits'] as Map).containsKey('name'), isFalse);
   });
 }

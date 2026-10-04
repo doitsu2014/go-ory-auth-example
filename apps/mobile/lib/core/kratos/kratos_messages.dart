@@ -34,6 +34,12 @@ String kratosMessage(AppLocalizations l10n, UiText m) {
       return l10n.kratos4060006;
     case 4070006:
       return l10n.kratos4070006;
+    // identity-service pre-registration webhook (ADR-0013): an app that
+    // still sends `traits.email`, and an unresolved / unconfirmed pseudonym.
+    case 4049001:
+      return l10n.kratos4049001;
+    case 4049002:
+      return l10n.kratos4049002;
     // Flow expired variants (login, registration, settings, recovery,
     // verification).
     case 4010001:
@@ -54,7 +60,8 @@ String failureMessage(AppLocalizations l10n, AppFailure f) {
     UnauthenticatedFailure() => l10n.unauthenticated,
     FlowValidationFailure() => l10n.validationFailed,
     UnknownFailure() => l10n.genericError,
-    ApiFailure(:final code) => switch (code) {
+    ApiFailure(:final code, :final retryAfter) => switch (code) {
+      'rate_limited' => rateLimitedMessage(l10n, retryAfter),
       'session_refresh_required' => l10n.sessionRefreshRequired,
       'email_not_verified' => l10n.emailNotVerified,
       'recovery_session_unavailable' => l10n.recoverySessionUnavailable,
@@ -63,4 +70,17 @@ String failureMessage(AppLocalizations l10n, AppFailure f) {
       _ => l10n.genericError,
     },
   };
+}
+
+/// Rate-limit text for a `Retry-After` delay: seconds below a minute,
+/// whole minutes from 60 s, whole hours from 3600 s (rounded up, so the user
+/// is never told to retry too early).
+String rateLimitedMessage(AppLocalizations l10n, Duration? retryAfter) {
+  final seconds = retryAfter?.inSeconds ?? 0;
+  if (seconds <= 0) return l10n.rateLimited;
+  if (seconds < 60) return l10n.rateLimitedRetryAfter(seconds);
+  if (seconds < 3600) {
+    return l10n.rateLimitedRetryAfterMinutes((seconds / 60).ceil());
+  }
+  return l10n.rateLimitedRetryAfterHours((seconds / 3600).ceil());
 }

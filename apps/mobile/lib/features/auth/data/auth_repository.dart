@@ -1,7 +1,10 @@
+import 'package:go_ory_auth_mobile/core/identity/login_identifier_client.dart';
+import 'package:go_ory_auth_mobile/core/identity/login_input.dart';
 import 'package:go_ory_auth_mobile/core/kratos/kratos_client.dart';
 import 'package:go_ory_auth_mobile/core/kratos/kratos_error_mapper.dart';
 import 'package:go_ory_auth_mobile/core/kratos/kratos_models.dart';
 import 'package:go_ory_auth_mobile/core/network/app_failure.dart';
+import 'package:go_ory_auth_mobile/core/storage/login_identifier_cache.dart';
 import 'package:go_ory_auth_mobile/core/storage/secure_token_store.dart';
 
 /// Result of a successful native registration.
@@ -31,13 +34,42 @@ class RecoveryGrant {
 
 /// Registration, login, verification, recovery and logout over Kratos native
 /// flows. Owns writing/wiping the session token. Throws [AppFailure] only.
+///
+/// Every flow that takes an identifier resolves the email / phone number to
+/// its pseudonym first (`POST /v1/auth/identifiers`, DD-18) and sends only
+/// the pseudonym to Kratos (ADR-0013).
 class AuthRepository {
-  AuthRepository({required KratosClient kratos, required TokenStore tokens})
-    : _kratos = kratos,
-      _tokens = tokens;
+  AuthRepository({
+    required KratosClient kratos,
+    required TokenStore tokens,
+    required LoginIdentifierResolver resolver,
+    required LoginIdentifierCache loginCache,
+  }) : _kratos = kratos,
+       _tokens = tokens,
+       _resolver = resolver,
+       _loginCache = loginCache;
 
   final KratosClient _kratos;
   final TokenStore _tokens;
+  final LoginIdentifierResolver _resolver;
+  final LoginIdentifierCache _loginCache;
+
+  /// The pseudonym resolved for the last registration attempt, kept so a
+  /// resubmit of the same flow with the same input (e.g. after Kratos
+  /// rejected the password) does not resolve again: registration resolves
+  /// are rate-limited per client IP (5/min, 30/day).
+  ({String flowId, LoginInput login, String loginId})? _registration;
+
+  /// The Kratos identifier for [target]: the session's pseudonym as is, or
+  /// the resolver's answer for what the customer typed.
+  Future<String> _identifierFor(LoginTarget target, LoginPurpose purpose) =>
+      switch (target) {
+        // No pseudonym in the session: never address Kratos with "".
+        PseudonymousLogin(:final identifier) when identifier.isEmpty =>
+          Future.error(const UnauthenticatedFailure()),
+        PseudonymousLogin(:final identifier) => Future.value(identifier),
+        final LoginInput input => _resolver.resolve(input, purpose),
+      };
 
   Future<T> _guard<T>(Future<T> Function() body) async {
     try {
@@ -86,14 +118,23 @@ class AuthRepository {
 
   Future<RegistrationOutcome> register({
     required String flowId,
-    required String email,
+    required LoginInput login,
     required String password,
   }) => _guard(() async {
+    final memo = _registration;
+    final String loginId;
+    if (memo != null && memo.flowId == flowId && memo.login == login) {
+      loginId = memo.loginId;
+    } else {
+      loginId = await _identifierFor(login, LoginPurpose.registration);
+      _registration = (flowId: flowId, login: login, loginId: loginId);
+    }
     final result = await _kratos.submitRegistration(
       flowId: flowId,
-      email: email,
+      loginId: loginId,
       password: password,
     );
+    _registration = null;
     final session = await _persist(result);
     return RegistrationOutcome(
       session: session,
@@ -105,36 +146,88 @@ class AuthRepository {
 
   Future<KratosFlow> startLogin() => _guard(_kratos.createLoginFlow);
 
+  /// Signs in with [login]. Re-uses the pseudonym cached by the last
+  /// successful sign-in with the same input; resolves it otherwise. A
+  /// rejected cached pseudonym is dropped so the next attempt resolves again
+  /// (no automatic retry: a wrong password must not count twice).
   Future<KratosSession> login({
     required String flowId,
-    required String identifier,
+    required LoginInput login,
     required String password,
   }) => _guard(() async {
-    final result = await _kratos.submitLogin(
-      flowId: flowId,
-      identifier: identifier,
-      password: password,
-    );
-    return await _persist(result);
+    final cached = await _readCache(login);
+    final identifier =
+        cached ?? await _identifierFor(login, LoginPurpose.signIn);
+    final NativeAuthResult result;
+    try {
+      result = await _kratos.submitLogin(
+        flowId: flowId,
+        identifier: identifier,
+        password: password,
+      );
+    } on FlowValidationFailure {
+      if (cached != null) await _removeCache(login);
+      rethrow;
+    }
+    final session = await _persist(result);
+    await _writeCache(login, identifier);
+    return session;
   });
+
+  // The cache is an optimisation: storage errors never fail a sign-in.
+  Future<String?> _readCache(LoginInput login) async {
+    try {
+      final v = await _loginCache.read(login);
+      return v == null || v.isEmpty ? null : v;
+    } on Object {
+      return null;
+    }
+  }
+
+  Future<void> _writeCache(LoginInput login, String identifier) async {
+    try {
+      await _loginCache.write(login, identifier);
+    } on Object {
+      // Resolved again next time.
+    }
+  }
+
+  Future<void> _clearCache() async {
+    try {
+      await _loginCache.clear();
+    } on Object {
+      // Ignored: see _writeCache.
+    }
+  }
+
+  Future<void> _removeCache(LoginInput login) async {
+    try {
+      await _loginCache.remove(login);
+    } on Object {
+      // Ignored: see _writeCache.
+    }
+  }
 
   // --- verification -------------------------------------------------------
 
-  /// Creates a verification flow and asks Kratos to email a code.
-  Future<KratosFlow> startVerification(String email) => _guard(() async {
+  /// Creates a verification flow and asks Kratos to send a code (email or
+  /// SMS, chosen server side from the pseudonym).
+  Future<KratosFlow> startVerification(LoginTarget target) => _guard(() async {
+    final loginId = await _identifierFor(target, LoginPurpose.verification);
     final flow = await _kratos.createVerificationFlow();
-    return await _kratos.submitVerification(flowId: flow.id, email: email);
+    return await _kratos.submitVerification(flowId: flow.id, email: loginId);
   });
 
   /// Resends a code on an existing flow.
   Future<KratosFlow> resendVerificationCode({
     required String flowId,
-    required String email,
-  }) => _guard(
-    () async => _codeResult(
-      await _kratos.submitVerification(flowId: flowId, email: email),
-    ),
-  );
+    required LoginTarget target,
+  }) => _guard(() async {
+    final loginId = await _identifierFor(target, LoginPurpose.verification);
+    return _codeResult(
+      await _kratos.submitVerification(flowId: flowId, email: loginId),
+    );
+  });
 
   /// Submits the emailed code. A wrong code comes back as `200` with an error
   /// message, which is surfaced as [FlowValidationFailure].
@@ -159,11 +252,13 @@ class AuthRepository {
 
   Future<KratosFlow> requestRecoveryCode({
     required String flowId,
-    required String email,
-  }) => _guard(
-    () async =>
-        _codeResult(await _kratos.submitRecovery(flowId: flowId, email: email)),
-  );
+    required LoginInput login,
+  }) => _guard(() async {
+    final loginId = await _identifierFor(login, LoginPurpose.recovery);
+    return _codeResult(
+      await _kratos.submitRecovery(flowId: flowId, email: loginId),
+    );
+  });
 
   /// Exchanges the recovery code for a privileged session + settings flow
   /// (`continue_with`).
@@ -235,10 +330,12 @@ class AuthRepository {
 
   // --- logout -------------------------------------------------------------
 
-  /// `performNativeLogout` then wipe storage. Storage is wiped even if Kratos
-  /// is unreachable or the session is already gone.
+  /// `performNativeLogout` then wipe storage (session token and every cached
+  /// pseudonym). Storage is wiped even if Kratos is unreachable or the
+  /// session is already gone.
   Future<void> logout() async {
     final token = await _tokens.read();
+    _registration = null;
     try {
       if (token != null && token.isNotEmpty) {
         await _kratos.logout(sessionToken: token);
@@ -247,6 +344,7 @@ class AuthRepository {
       // Best effort: the local credential is removed regardless.
     } finally {
       await _tokens.clear();
+      await _clearCache();
     }
   }
 

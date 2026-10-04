@@ -53,7 +53,7 @@ class AuthController extends Notifier<AuthState> {
 
   void registered(RegistrationOutcome outcome) => state = Authenticated(
     outcome.session,
-    pendingVerification: !outcome.session.identity.emailVerified,
+    pendingVerification: !outcome.session.identity.loginVerified,
     verificationFlowId: outcome.verificationFlowId,
   );
 

@@ -1,6 +1,9 @@
 // Real-stack test against the local compose stack (Kratos public :4433,
-// Mailpit :8025, optionally identity-service :8080). Plain `test` (no widget
-// binding) so real HTTP works. Excluded by default; run with:
+// Mailpit :8025, identity-service :8080). Every flow that takes an
+// identifier resolves it first (`POST /v1/auth/identifiers`, ADR-0013), so
+// identity-service is required. Codes for phone logins arrive through the
+// local SMS sink (Mailpit, `<E.164 digits>@sms.local`). Plain `test` (no
+// widget binding) so real HTTP works. Excluded by default; run with:
 //
 //   flutter test --tags integration
 //
@@ -12,10 +15,13 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:dio/dio.dart';
+import 'package:go_ory_auth_mobile/core/identity/login_identifier_client.dart';
+import 'package:go_ory_auth_mobile/core/identity/login_input.dart';
 import 'package:go_ory_auth_mobile/core/kratos/ory_kratos_client.dart';
 import 'package:go_ory_auth_mobile/core/logging/app_logger.dart';
 import 'package:go_ory_auth_mobile/core/network/api_client.dart';
 import 'package:go_ory_auth_mobile/core/network/app_failure.dart';
+import 'package:go_ory_auth_mobile/core/storage/login_identifier_cache.dart';
 import 'package:go_ory_auth_mobile/core/storage/secure_token_store.dart';
 import 'package:go_ory_auth_mobile/features/auth/data/auth_repository.dart';
 import 'package:go_ory_auth_mobile/features/profile/data/profile_repository.dart';
@@ -45,8 +51,24 @@ String _randomAlnum(int n) {
 /// Strong random password (never in a breach list, never logged).
 String strongPassword() => '${_randomAlnum(20)}!#${_randomAlnum(4)}';
 
-/// Polls Mailpit for the newest message to [email] created after [after]
-/// whose snippet satisfies [match], and returns the 6-digit code.
+/// identity-service message templates (vi/en, domain/login/messages.go).
+bool _isRecovery(String snippet) {
+  final s = snippet.toLowerCase();
+  return s.contains('khôi phục') ||
+      s.contains('khoi phuc') ||
+      s.contains('recovery');
+}
+
+bool _isVerification(String snippet) {
+  final s = snippet.toLowerCase();
+  return s.contains('xác minh') ||
+      s.contains('xac minh') ||
+      s.contains('verification');
+}
+
+/// Polls Mailpit for the newest message to [email] (an email address or the
+/// SMS sink address) created after [after] whose snippet satisfies [match],
+/// and returns the 6-digit code.
 Future<String> codeFromMailpit(
   String email, {
   required DateTime after,
@@ -87,39 +109,56 @@ Future<bool> identityServiceUp() async {
   }
 }
 
+final RegExp _pseudonym = RegExp(r'^[a-z2-7]{52}@login\.invalid$');
+
 void main() {
   final logLines = <String>[];
   final logger = AppLogger(sink: (_, m) => logLines.add(m));
   final kratos = OryKratosClient(baseUrl: kratosUrl);
+  final resolver = HttpLoginIdentifierResolver(
+    buildPublicApiDio(baseUrl: apiUrl, logger: logger),
+  );
   late InMemoryTokenStore tokens;
   late AuthRepository auth;
+
+  AuthRepository newAuth(TokenStore store) => AuthRepository(
+    kratos: kratos,
+    tokens: store,
+    resolver: resolver,
+    loginCache: InMemoryLoginIdentifierCache(),
+  );
 
   final email =
       'mobile-it-${DateTime.now().millisecondsSinceEpoch}-'
       '${_randomAlnum(6).toLowerCase()}@example.com';
+  final emailLogin = LoginInput(type: LoginType.email, value: email);
+  // Login contacts of this run: asserted absent from every log line too.
+  final loginValues = <String>[email];
   var password = strongPassword();
 
   setUpAll(() {
     tokens = InMemoryTokenStore();
-    auth = AuthRepository(kratos: kratos, tokens: tokens);
+    auth = newAuth(tokens);
   });
 
   test('registration -> token -> verify (Mailpit code) -> toSession', () async {
     final t0 = DateTime.now().toUtc().subtract(const Duration(seconds: 2));
     final regFlow = await auth.startRegistration();
     expect(regFlow.type, 'api');
-    expect(regFlow.node('traits.email'), isNotNull);
+    expect(regFlow.node('traits.login_id'), isNotNull);
 
     final outcome = await auth.register(
       flowId: regFlow.id,
-      email: email,
+      login: emailLogin,
       password: password,
     );
     final token = await tokens.read();
     expect(token, startsWith('ory_st_'));
-    expect(outcome.session.identity.email, email);
+    // Kratos holds the pseudonym only (ADR-0013).
+    expect(outcome.session.identity.loginId, matches(_pseudonym));
+    expect(outcome.session.identity.traits.containsKey('email'), isFalse);
     expect(outcome.session.identity.schemaId, 'customer');
-    expect(outcome.session.identity.emailVerified, isFalse);
+    expect(outcome.session.identity.loginVerified, isFalse);
 
     // Follow continue_with show_verification_ui when Kratos sends it;
     // otherwise start a native verification flow (sends a fresh code).
@@ -127,15 +166,18 @@ void main() {
     var after = t0;
     if (verificationFlowId == null) {
       after = DateTime.now().toUtc().subtract(const Duration(seconds: 1));
-      final vf = await auth.startVerification(email);
+      final vf = await auth.startVerification(
+        PseudonymousLogin(outcome.session.identity.loginId),
+      );
       expect(vf.state, 'sent_email');
       verificationFlowId = vf.id;
     }
     final flowId = verificationFlowId;
+    // Delivered to the real address by identity-service's courier hook.
     final code = await codeFromMailpit(
       email,
       after: after,
-      match: (s) => s.contains(flowId),
+      match: _isVerification,
     );
 
     // Wrong code first: surfaced as FlowValidationFailure with message id.
@@ -155,7 +197,7 @@ void main() {
 
     final session = await auth.refreshSession();
     expect(session.active, isTrue);
-    expect(session.identity.emailVerified, isTrue);
+    expect(session.identity.loginVerified, isTrue);
     _report(
       '[it] registration+verification OK (continue_with show_verification_ui '
       '${outcome.verificationFlowId == null ? 'absent, fallback' : 'present'})',
@@ -166,6 +208,12 @@ void main() {
     'settings flow: weak password rejected by Kratos, strong one accepted',
     () async {
       final settings = SettingsRepository(kratos: kratos, tokens: tokens);
+      // PLI-FR-09: re-authentication uses the session's pseudonym as is.
+      final current = await auth.refreshSession();
+      await settings.reauthenticate(
+        identifier: current.identity.loginId,
+        password: password,
+      );
       final flow = await settings.startSettings();
       await expectLater(
         settings.changePassword(flowId: flow.id, password: 'password1234'),
@@ -190,18 +238,19 @@ void main() {
   test('recovery (code) -> privileged session -> new password', () async {
     final t0 = DateTime.now().toUtc().subtract(const Duration(seconds: 1));
     final flow = await auth.startRecovery();
-    final sent = await auth.requestRecoveryCode(flowId: flow.id, email: email);
-    expect(sent.state, 'sent_email');
-    final code = await codeFromMailpit(
-      email,
-      after: t0,
-      match: (s) => s.toLowerCase().contains('recover'),
+    final sent = await auth.requestRecoveryCode(
+      flowId: flow.id,
+      login: LoginInput(type: LoginType.email, value: email.toUpperCase()),
     );
+    expect(sent.state, 'sent_email');
+    // Codes travel through the Kratos http courier, so an earlier
+    // verification mail can land after t0: accept only a recovery message.
+    final code = await codeFromMailpit(email, after: t0, match: _isRecovery);
     try {
       final grant = await auth.submitRecoveryCode(flowId: flow.id, code: code);
       password = strongPassword();
       final s = await auth.completeRecovery(grant: grant, password: password);
-      expect(s.identity.email, email);
+      expect(s.identity.loginId, matches(_pseudonym));
       _report('[it] recovery OK');
     } on FlowValidationFailure catch (f) {
       _report(
@@ -229,14 +278,14 @@ void main() {
         return;
       }
       final loginTokens = InMemoryTokenStore();
-      final loginRepo = AuthRepository(kratos: kratos, tokens: loginTokens);
+      final loginRepo = newAuth(loginTokens);
       final flow = await loginRepo.startLogin();
       final session = await loginRepo.login(
         flowId: flow.id,
-        identifier: email,
+        login: emailLogin,
         password: password,
       );
-      expect(session.identity.email, email);
+      expect(session.identity.loginId, matches(_pseudonym));
 
       var unauthorized = 0;
       final profile = ProfileRepository(
@@ -248,7 +297,8 @@ void main() {
         ),
       );
       final me = await profile.getMe();
-      expect(me.email, email);
+      expect(me.login.type, LoginType.email);
+      expect(me.login.value, email);
       expect(me.emailVerified, isTrue);
       expect(unauthorized, 0);
       _report('[it] login + GET /v1/me OK');
@@ -264,11 +314,11 @@ void main() {
         return;
       }
       final loginTokens = InMemoryTokenStore();
-      final loginRepo = AuthRepository(kratos: kratos, tokens: loginTokens);
+      final loginRepo = newAuth(loginTokens);
       final flow = await loginRepo.startLogin();
       await loginRepo.login(
         flowId: flow.id,
-        identifier: email,
+        login: emailLogin,
         password: password,
       );
       final profile = ProfileRepository(
@@ -346,10 +396,80 @@ void main() {
     );
   });
 
+  test('phone login: register -> SMS code -> verify -> sign out -> sign in '
+      '(national format) -> recovery code', () async {
+    final digits = '849${10000000 + _rng.nextInt(89999999)}';
+    final phone = '+$digits';
+    final national = '0${digits.substring(2)}';
+    final sink = '$digits@sms.local';
+    loginValues.addAll([phone, national]);
+    final phoneTokens = InMemoryTokenStore();
+    final phoneAuth = newAuth(phoneTokens);
+    final phonePassword = strongPassword();
+
+    final t0 = DateTime.now().toUtc().subtract(const Duration(seconds: 2));
+    final reg = await phoneAuth.startRegistration();
+    final outcome = await phoneAuth.register(
+      flowId: reg.id,
+      login: LoginInput(type: LoginType.phone, value: phone),
+      password: phonePassword,
+    );
+    expect(outcome.session.identity.loginId, matches(_pseudonym));
+    var flowId = outcome.verificationFlowId;
+    if (flowId == null) {
+      final vf = await phoneAuth.startVerification(
+        PseudonymousLogin(outcome.session.identity.loginId),
+      );
+      flowId = vf.id;
+    }
+    final code = await codeFromMailpit(sink, after: t0, match: _isVerification);
+    final verified = await phoneAuth.verify(flowId: flowId, code: code);
+    expect(verified.state, 'passed_challenge');
+    await phoneAuth.logout();
+
+    final login = await phoneAuth.startLogin();
+    final session = await phoneAuth.login(
+      flowId: login.id,
+      login: LoginInput(type: LoginType.phone, value: national),
+      password: phonePassword,
+    );
+    expect(session.identity.loginId, outcome.session.identity.loginId);
+    expect(session.identity.loginVerified, isTrue);
+
+    if (await identityServiceUp()) {
+      final profile = ProfileRepository(
+        buildApiDio(
+          baseUrl: apiUrl,
+          readToken: phoneTokens.read,
+          onUnauthorized: () async {},
+          logger: logger,
+        ),
+      );
+      final me = await profile.getMe();
+      expect(me.login.type, LoginType.phone);
+      expect(me.login.value, phone);
+      expect(me.email, isNull);
+    }
+    await phoneAuth.logout();
+
+    final t1 = DateTime.now().toUtc().subtract(const Duration(seconds: 1));
+    final rec = await phoneAuth.startRecovery();
+    final sent = await phoneAuth.requestRecoveryCode(
+      flowId: rec.id,
+      login: LoginInput(type: LoginType.phone, value: national),
+    );
+    expect(sent.state, 'sent_email');
+    expect(
+      await codeFromMailpit(sink, after: t1, match: _isRecovery),
+      hasLength(6),
+    );
+    _report('[it] phone register/verify/sign-in/recovery OK');
+  });
+
   tearDownAll(() {
     for (final l in logLines) {
       expect(l, isNot(contains('ory_st_')), reason: 'token leaked into logs');
-      for (final v in [_piiPhone, _piiLine1, _piiIdNumber]) {
+      for (final v in [_piiPhone, _piiLine1, _piiIdNumber, ...loginValues]) {
         expect(l, isNot(contains(v)), reason: 'PII leaked into logs');
       }
     }

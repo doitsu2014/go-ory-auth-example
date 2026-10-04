@@ -2,12 +2,14 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_ory_auth_mobile/core/config/env.dart';
+import 'package:go_ory_auth_mobile/core/identity/login_identifier_client.dart';
 import 'package:go_ory_auth_mobile/core/kratos/kratos_client.dart';
 import 'package:go_ory_auth_mobile/core/kratos/ory_kratos_client.dart';
 import 'package:go_ory_auth_mobile/core/logging/app_logger.dart';
 import 'package:go_ory_auth_mobile/core/network/api_client.dart';
 import 'package:go_ory_auth_mobile/core/network/interceptors.dart';
 import 'package:go_ory_auth_mobile/core/platform/secure_screen.dart';
+import 'package:go_ory_auth_mobile/core/storage/login_identifier_cache.dart';
 import 'package:go_ory_auth_mobile/core/storage/secure_token_store.dart';
 import 'package:go_ory_auth_mobile/features/auth/data/auth_repository.dart';
 import 'package:go_ory_auth_mobile/features/auth/presentation/auth_controller.dart';
@@ -36,10 +38,26 @@ final kratosClientProvider = Provider<KratosClient>((ref) {
   );
 });
 
+/// `POST /v1/auth/identifiers` (public: no Bearer token).
+final loginIdentifierResolverProvider = Provider<LoginIdentifierResolver>(
+  (ref) => HttpLoginIdentifierResolver(
+    buildPublicApiDio(
+      baseUrl: ref.watch(envProvider).apiUrl,
+      logger: ref.watch(loggerProvider),
+    ),
+  ),
+);
+
+final loginIdentifierCacheProvider = Provider<LoginIdentifierCache>(
+  (ref) => SecureLoginIdentifierCache(),
+);
+
 final authRepositoryProvider = Provider<AuthRepository>(
   (ref) => AuthRepository(
     kratos: ref.watch(kratosClientProvider),
     tokens: ref.watch(tokenStoreProvider),
+    resolver: ref.watch(loginIdentifierResolverProvider),
+    loginCache: ref.watch(loginIdentifierCacheProvider),
   ),
 );
 

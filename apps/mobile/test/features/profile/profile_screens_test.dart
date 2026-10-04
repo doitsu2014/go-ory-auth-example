@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_ory_auth_mobile/app/providers.dart';
+import 'package:go_ory_auth_mobile/core/identity/login_input.dart';
 import 'package:go_ory_auth_mobile/core/network/app_failure.dart';
 import 'package:go_ory_auth_mobile/features/auth/domain/auth_state.dart';
 import 'package:go_ory_auth_mobile/features/profile/domain/me.dart';
@@ -10,9 +11,17 @@ import 'package:mocktail/mocktail.dart';
 
 import '../../helpers/helpers.dart';
 
-Me me({bool verified = true, String? displayName = 'An'}) => Me(
+Me me({
+  bool verified = true,
+  String? displayName = 'An',
+  LoginContact login = const LoginContact(
+    type: LoginType.email,
+    value: 'an@example.com',
+  ),
+}) => Me(
   id: '5d9c2c61-6a1e-4b8f-9b8a-2f9d6f0c1e11',
-  email: 'an@example.com',
+  login: login,
+  email: login.type == LoginType.email ? login.value : null,
   emailVerified: verified,
   locale: 'vi-VN',
   createdAt: DateTime.utc(2026, 10, 3),
@@ -47,10 +56,37 @@ void main() {
       await pump(tester, const ProfileScreen());
       await tester.pumpAndSettle();
       expect(find.text('an@example.com'), findsOneWidget);
+      expect(
+        tester.widget<Text>(find.byKey(const Key('profile.loginType'))).data,
+        'Email',
+      );
       expect(find.text('Verified'), findsOneWidget);
       expect(find.text('An'), findsOneWidget); // display name (nickname)
       expect(find.text('vi-VN'), findsOneWidget);
       expect(find.text('Verify now'), findsNothing);
+    });
+
+    testWidgets('phone login: shows me.login (type + value), never Kratos '
+        'traits', (tester) async {
+      when(profile.getMe).thenAnswer(
+        (_) async => me(
+          login: const LoginContact(
+            type: LoginType.phone,
+            value: '+84901234567',
+          ),
+        ),
+      );
+      await pump(tester, const ProfileScreen());
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<Text>(find.byKey(const Key('profile.login'))).data,
+        '+84901234567',
+      );
+      expect(
+        tester.widget<Text>(find.byKey(const Key('profile.loginType'))).data,
+        'Phone number',
+      );
+      expect(find.textContaining('login.invalid'), findsNothing);
     });
 
     testWidgets('no real-name row; personal info is not fetched', (
@@ -60,6 +96,7 @@ void main() {
       // screen. A deprecated `Me.name` (NAME-FR-07) is ignored.
       final parsed = Me.fromJson({
         'id': '5d9c2c61-6a1e-4b8f-9b8a-2f9d6f0c1e11',
+        'login': {'type': 'email', 'value': 'an@example.com'},
         'email': 'an@example.com',
         'email_verified': true,
         'locale': 'vi-VN',

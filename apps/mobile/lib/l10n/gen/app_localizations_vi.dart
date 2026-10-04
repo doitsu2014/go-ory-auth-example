@@ -57,7 +57,7 @@ class AppLocalizationsVi extends AppLocalizations {
   String get haveAccount => 'Đã có tài khoản? Đăng nhập';
 
   @override
-  String get verifyEmailTitle => 'Xác minh email';
+  String get verifyEmailTitle => 'Xác minh tài khoản';
 
   @override
   String verifyEmailBody(String email) {
@@ -81,11 +81,10 @@ class AppLocalizationsVi extends AppLocalizations {
 
   @override
   String get recoveryEmailBody =>
-      'Nhập email tài khoản. Nếu tài khoản tồn tại, chúng tôi sẽ gửi mã khôi phục.';
+      'Nhập email hoặc số điện thoại của tài khoản. Nếu tài khoản tồn tại, chúng tôi sẽ gửi mã khôi phục.';
 
   @override
-  String get recoveryCodeBody =>
-      'Nhập mã khôi phục chúng tôi đã gửi qua email.';
+  String get recoveryCodeBody => 'Nhập mã khôi phục chúng tôi đã gửi cho bạn.';
 
   @override
   String get recoveryCode => 'Mã khôi phục';
@@ -157,7 +156,8 @@ class AppLocalizationsVi extends AppLocalizations {
       'Để bảo mật, vui lòng đăng nhập lại trước khi đổi mật khẩu.';
 
   @override
-  String get emailNotVerified => 'Vui lòng xác minh email để tiếp tục.';
+  String get emailNotVerified =>
+      'Vui lòng xác minh email hoặc số điện thoại để tiếp tục.';
 
   @override
   String get recoverySessionUnavailable =>
@@ -188,26 +188,28 @@ class AppLocalizationsVi extends AppLocalizations {
       'Nếu địa chỉ này có tài khoản, chúng tôi đã gửi mã khôi phục tới đó.';
 
   @override
-  String get kratos1080002 => 'Email của bạn đã được xác minh.';
+  String get kratos1080002 =>
+      'Email hoặc số điện thoại của bạn đã được xác minh.';
 
   @override
-  String get kratos1080003 => 'Chúng tôi đã gửi mã xác minh tới email của bạn.';
+  String get kratos1080003 => 'Chúng tôi đã gửi mã xác minh cho bạn.';
 
   @override
   String get kratos4000002 => 'Trường này là bắt buộc.';
 
   @override
-  String get kratos4000006 => 'Email hoặc mật khẩu không đúng.';
+  String get kratos4000006 => 'Email/số điện thoại hoặc mật khẩu không đúng.';
 
   @override
-  String get kratos4000007 => 'Email này đã được dùng cho một tài khoản khác.';
+  String get kratos4000007 =>
+      'Email hoặc số điện thoại này đã được dùng cho một tài khoản khác.';
 
   @override
   String get kratos4000010 =>
-      'Tài khoản chưa được kích hoạt. Bạn đã xác minh email chưa?';
+      'Tài khoản chưa được kích hoạt. Bạn đã xác minh email hoặc số điện thoại chưa?';
 
   @override
-  String get kratos4000031 => 'Mật khẩu quá giống với email.';
+  String get kratos4000031 => 'Mật khẩu quá giống với thông tin đăng nhập.';
 
   @override
   String kratos4000032(String minLength) {
@@ -333,4 +335,66 @@ class AppLocalizationsVi extends AppLocalizations {
 
   @override
   String get dateOfBirthOutOfRange => 'Bạn phải từ 13 đến 120 tuổi.';
+
+  @override
+  String verifyPhoneBody(String phone) {
+    return 'Nhập mã chúng tôi đã gửi qua SMS tới $phone.';
+  }
+
+  @override
+  String get verifyBodyGeneric => 'Nhập mã xác minh chúng tôi đã gửi cho bạn.';
+
+  @override
+  String get loginTypeLabel => 'Đăng nhập bằng';
+
+  @override
+  String get loginTypeEmail => 'Email';
+
+  @override
+  String get loginTypePhone => 'Điện thoại';
+
+  @override
+  String get loginPhoneHint => '0901234567 hoặc +84901234567';
+
+  @override
+  String get loginInvalidEmail => 'Vui lòng nhập địa chỉ email hợp lệ.';
+
+  @override
+  String get loginInvalidPhone =>
+      'Vui lòng nhập số điện thoại hợp lệ, ví dụ 0901234567 hoặc +84901234567.';
+
+  @override
+  String get loginUnsupportedCountry =>
+      'Chưa hỗ trợ số điện thoại của quốc gia này.';
+
+  @override
+  String get rateLimited =>
+      'Bạn đã thử quá nhiều lần. Vui lòng đợi một lát rồi thử lại.';
+
+  @override
+  String rateLimitedRetryAfter(int seconds) {
+    return 'Bạn đã thử quá nhiều lần. Vui lòng thử lại sau $seconds giây.';
+  }
+
+  @override
+  String rateLimitedRetryAfterMinutes(int minutes) {
+    return 'Bạn đã thử quá nhiều lần. Vui lòng thử lại sau $minutes phút.';
+  }
+
+  @override
+  String rateLimitedRetryAfterHours(int hours) {
+    return 'Bạn đã thử quá nhiều lần. Vui lòng thử lại sau $hours giờ.';
+  }
+
+  @override
+  String get passwordHint =>
+      'Không dùng email hoặc số điện thoại của bạn trong mật khẩu.';
+
+  @override
+  String get kratos4049001 =>
+      'Phiên bản ứng dụng đã cũ. Vui lòng cập nhật ứng dụng và thử lại.';
+
+  @override
+  String get kratos4049002 =>
+      'Không thể xác nhận email hoặc số điện thoại của bạn. Vui lòng thử lại.';
 }

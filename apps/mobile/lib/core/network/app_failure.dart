@@ -61,9 +61,13 @@ final class ApiFailure extends AppFailure {
     super.status,
     super.detail,
     this.fieldErrors = const [],
+    this.retryAfter,
   });
 
   final List<FieldError> fieldErrors;
+
+  /// `Retry-After` of a `429 rate_limited` response, when sent.
+  final Duration? retryAfter;
 }
 
 /// Anything unexpected (bad payload, programming error).

@@ -3,14 +3,17 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_ory_auth_mobile/app/providers.dart';
+import 'package:go_ory_auth_mobile/core/identity/login_input.dart';
 import 'package:go_ory_auth_mobile/core/kratos/kratos_models.dart';
 import 'package:go_ory_auth_mobile/features/auth/data/auth_repository.dart';
 import 'package:go_ory_auth_mobile/features/auth/presentation/widgets/flow_form.dart';
+import 'package:go_ory_auth_mobile/features/auth/presentation/widgets/login_identifier_field.dart';
 import 'package:go_ory_auth_mobile/l10n/gen/app_localizations.dart';
 
 enum RecoveryStep { email, code, newPassword }
 
-/// Native recovery flow (code): email → code → privileged settings flow
+/// Native recovery flow (code): email / phone (resolved to the pseudonym,
+/// sent as Kratos' `email`) → code → privileged settings flow
 /// (`continue_with`) → new password → signed in.
 class ForgotPasswordScreen extends ConsumerStatefulWidget {
   const ForgotPasswordScreen({super.key});
@@ -23,8 +26,12 @@ class ForgotPasswordScreen extends ConsumerStatefulWidget {
 class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen>
     with FlowFormMixin {
   static const _bound = {'email', 'code', 'password', 'csrf_token', 'method'};
-  final _email = TextEditingController();
+  final _login = TextEditingController();
   final _code = TextEditingController();
+  LoginType _loginType = LoginType.email;
+
+  /// Client-side format check result (UX only).
+  String? _loginCode;
   final _password = TextEditingController();
   RecoveryStep _step = RecoveryStep.email;
   RecoveryGrant? _grant;
@@ -51,21 +58,27 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen>
   void dispose() {
     final grant = _grant;
     if (grant != null && !_completed) unawaited(_repo.abandonRecovery(grant));
-    for (final c in [_email, _code, _password]) {
+    for (final c in [_login, _code, _password]) {
       c.dispose();
     }
     super.dispose();
   }
 
-  Future<void> _sendCode() => runSubmit((flow) async {
-    final result = await ref
-        .read(authRepositoryProvider)
-        .requestRecoveryCode(flowId: flow!.id, email: _email.text.trim());
-    setState(() {
-      this.flow = result;
-      _step = RecoveryStep.code;
+  Future<void> _sendCode() async {
+    final login = LoginInput(type: _loginType, value: _login.text);
+    final code = login.validate();
+    setState(() => _loginCode = code);
+    if (code != null) return;
+    await runSubmit((flow) async {
+      final result = await ref
+          .read(authRepositoryProvider)
+          .requestRecoveryCode(flowId: flow!.id, login: login);
+      setState(() {
+        this.flow = result;
+        _step = RecoveryStep.code;
+      });
     });
-  });
+  }
 
   Future<void> _submitCode() => runSubmit((flow) async {
     final grant = await ref
@@ -92,14 +105,24 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen>
     final step = switch (_step) {
       RecoveryStep.email => [
         Text(l10n.recoveryEmailBody),
-        TextField(
-          key: const Key('recovery.email'),
-          controller: _email,
-          keyboardType: TextInputType.emailAddress,
-          autofillHints: const [AutofillHints.email],
-          decoration: InputDecoration(
-            labelText: l10n.email,
-            errorText: fieldError(context, 'email'),
+        LoginIdentifierField(
+          keyPrefix: 'recovery',
+          controller: _login,
+          type: _loginType,
+          onTypeChanged: (t) => setState(() {
+            _loginType = t;
+            _loginCode = null;
+          }),
+          onChanged: (_) {
+            // The format error described the previous value.
+            if (_loginCode != null) setState(() => _loginCode = null);
+          },
+          errorText: loginErrorText(
+            l10n,
+            _loginType,
+            localCode: _loginCode,
+            failure: failure,
+            kratosError: fieldError(context, 'email'),
           ),
         ),
         SubmitButton(

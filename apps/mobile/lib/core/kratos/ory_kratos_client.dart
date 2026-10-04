@@ -84,10 +84,11 @@ class OryKratosClient implements KratosClient {
   @override
   Future<NativeAuthResult> submitRegistration({
     required String flowId,
-    required String email,
+    required String loginId,
     required String password,
   }) {
-    // The customer schema has only `email`; the name is personal info
+    // The customer schema has only `login_id` (the pseudonym from
+    // `POST /v1/auth/identifiers`, ADR-0013); the name is personal info
     // (identity-service `PUT /v1/me/personal-info`), never a Kratos trait.
     final body = UpdateRegistrationFlowBody(
       (b) => b
@@ -98,7 +99,7 @@ class OryKratosClient implements KratosClient {
             (p) => p
               ..method = 'password'
               ..password = password
-              ..traits = JsonObject(<String, Object>{'email': email}),
+              ..traits = JsonObject(<String, Object>{'login_id': loginId}),
           ),
         ),
     );
