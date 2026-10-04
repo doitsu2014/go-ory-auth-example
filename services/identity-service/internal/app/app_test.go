@@ -59,7 +59,7 @@ func adminActor(id uuid.UUID) app.Actor {
 
 func customerPrincipal(verified bool) identity.Principal {
 	return identity.Principal{IdentityID: uuid.New(), Kind: identity.KindCustomer, AAL: identity.AAL1,
-		Email: "an@example.com", EmailVerified: verified, ExpiresAt: t0.Add(time.Hour)}
+		Email: "an@example.com", LoginID: "an@example.com", EmailVerified: verified, ExpiresAt: t0.Add(time.Hour)}
 }
 
 func ptr[T any](v T) *T { return &v }
@@ -754,10 +754,7 @@ func TestFR11_ListScansPastAdminOnlyPage(t *testing.T) {
 	if err != nil || len(page.Items) != 1 || page.Items[0].Identity.ID != c.ID {
 		t.Fatalf("scan: %+v %v", page, err)
 	}
-	page, err = svc.List(context.Background(), a, app.CustomerQuery{Email: "  AN@Example.com "})
-	if err != nil || len(page.Items) != 1 {
-		t.Fatalf("email filter must be normalised: %+v %v", page, err)
-	}
+	// The ?email= filter was removed (PLI-FR-11): lookups go by body.
 }
 
 func TestFR10_ControlCharactersRejected(t *testing.T) {

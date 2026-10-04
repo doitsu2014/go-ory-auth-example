@@ -20,6 +20,7 @@ import (
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/adapter/localkms"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/app"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/identity"
+	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/login"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/machine"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/platform"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/testutil"
@@ -66,7 +67,7 @@ func (s *syncBuffer) String() string {
 
 func principal(kind identity.Kind, aal identity.AAL, id uuid.UUID, verified bool) identity.Principal {
 	return identity.Principal{
-		IdentityID: id, SessionID: uuid.New(), Kind: kind, AAL: aal, Email: "u@example.com",
+		IdentityID: id, SessionID: uuid.New(), Kind: kind, AAL: aal, Email: "u@example.com", LoginID: "u@example.com",
 		EmailVerified: verified, AuthenticatedAt: now.Add(-time.Hour), ExpiresAt: now.Add(time.Hour),
 	}
 }
@@ -106,7 +107,7 @@ func newFixture(t *testing.T) *fixture {
 	v.Errs["aal2req"] = app.ErrAAL2Required
 	v.Errs["down"] = fmt.Errorf("%w: boom", app.ErrDependencyUnavailable)
 
-	cust := ids.Add(identity.Identity{SchemaID: "customer", Email: "c@example.com", CreatedAt: now})
+	cust := ids.Add(identity.Identity{SchemaID: "customer", Email: "c@example.com", LoginID: "c@example.com", CreatedAt: now})
 	target := ids.Add(identity.Identity{SchemaID: "admin", Email: "t@example.com", HasTOTP: true, TOTPCreatedAt: now, CreatedAt: now})
 	roles.M[target.ID] = []identity.Role{identity.RoleSupport}
 
@@ -137,6 +138,10 @@ func newFixture(t *testing.T) *fixture {
 			RevealLimiter: app.NewRateLimiter(app.RevealRateRules, clock.Now),
 		},
 		Machine: &app.MachineService{Identities: ids, Audit: repos.Audit},
+		Logins: &app.LoginIdentifierService{Keys: kms, Logins: repos.Logins, Tx: store, Identities: ids,
+			Phone: login.PhonePolicy{DefaultCountry: "84", AllowedCountries: []string{"84"}}, PhoneEnabled: true,
+			Phase: app.PhaseComplete, Clock: clock, Log: log,
+			ResolveLimiter: app.NewKeyedLimiter[string]([]app.RateRule{{Limit: 3, Window: time.Minute}}, clock.Now)},
 		ServiceClients: &app.ServiceClientService{Authz: authz, Clients: clients, Verifier: mv, Tx: store,
 			Idempotency: repos.Idempotency, Clock: clock, Log: log},
 	}

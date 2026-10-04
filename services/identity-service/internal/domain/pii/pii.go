@@ -467,6 +467,16 @@ var twoDigitCodes = map[string]bool{
 	"93": true, "94": true, "95": true, "98": true,
 }
 
+// CallingCode returns the country calling code (digits, no "+") of a valid
+// E.164 number.
+func CallingCode(e164 string) string {
+	digits := strings.TrimPrefix(e164, "+")
+	if len(digits) < 3 {
+		return ""
+	}
+	return digits[:callingCodeLen(digits)]
+}
+
 func callingCodeLen(digits string) int {
 	switch {
 	case digits[0] == '1' || digits[0] == '7':

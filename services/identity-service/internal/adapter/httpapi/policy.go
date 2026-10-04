@@ -33,6 +33,9 @@ type Policy struct {
 // entry, an admin route declares neither a permission nor Self, a machine
 // route declares no scope, or an entry has no route (see ValidatePolicies).
 var RoutePolicies = map[string]Policy{
+	// Public (no credential, per-IP limits in the use case). PLI-FR-01.
+	"POST /v1/auth/identifiers": {Plane: PlanePublic},
+
 	// Customer plane (bearer only). FR-09, FR-10.
 	"GET /v1/me":   {Plane: PlaneCustomer, Self: true},
 	"PATCH /v1/me": {Plane: PlaneCustomer, Self: true},
@@ -90,6 +93,8 @@ func ValidatePolicies(r chi.Routes, policies map[string]Policy) error {
 		}
 		wantPlane := PlaneNone
 		switch {
+		case strings.HasPrefix(route, publicPrefix):
+			wantPlane = PlanePublic
 		case strings.HasPrefix(route, "/admin/v1/"):
 			wantPlane = PlaneAdmin
 		case strings.HasPrefix(route, "/v1/"):
@@ -99,6 +104,9 @@ func ValidatePolicies(r chi.Routes, policies map[string]Policy) error {
 		}
 		if p.Plane != wantPlane || wantPlane == PlaneNone {
 			errs = append(errs, fmt.Errorf("route %q: policy plane does not match its prefix", k))
+		}
+		if p.Plane == PlanePublic && (p.Permission != "" || p.Self || p.AllowAAL1 || p.Scope != "") {
+			errs = append(errs, fmt.Errorf("public route %q may not declare authorization", k))
 		}
 		if p.Plane == PlaneAdmin && p.Permission == "" && !p.Self {
 			errs = append(errs, fmt.Errorf("admin route %q declares no permission", k))

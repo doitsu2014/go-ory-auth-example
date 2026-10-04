@@ -3,6 +3,7 @@ package openbao
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
@@ -67,6 +68,32 @@ func (f *fakeTransit) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.hmacBody = body
 		sum := bytes.Repeat([]byte{0xab}, 32)
 		reply(map[string]any{"data": map[string]any{"hmac": "vault:v1:" + base64.StdEncoding.EncodeToString(sum)}})
+	case "/v1/transit/hmac/identity-login-pseudonym/sha2-256":
+		f.hmacBody = body
+		in, _ := base64.StdEncoding.DecodeString(body["input"].(string))
+		sum := sha256.Sum256(in)
+		reply(map[string]any{"data": map[string]any{"hmac": "vault:v1:" + base64.StdEncoding.EncodeToString(sum[:])}})
+	case "/v1/transit/encrypt/identity-login-kek":
+		ct := "vault:v" + string(rune('0'+f.version)) + ":" + base64.StdEncoding.EncodeToString([]byte(uuid.NewString()))
+		f.stored[ct] = [2]string{body["plaintext"].(string), body["associated_data"].(string)}
+		reply(map[string]any{"data": map[string]any{"ciphertext": ct, "key_version": f.version}})
+	case "/v1/transit/decrypt/identity-login-kek":
+		var results []map[string]any
+		failed := false
+		for _, raw := range body["batch_input"].([]any) {
+			it := raw.(map[string]any)
+			s, ok := f.stored[it["ciphertext"].(string)]
+			if !ok || s[1] != it["associated_data"] {
+				failed = true
+				results = append(results, map[string]any{"plaintext": "", "error": "cipher: message authentication failed"})
+				continue
+			}
+			results = append(results, map[string]any{"plaintext": s[0]})
+		}
+		if failed {
+			w.WriteHeader(http.StatusBadRequest)
+		}
+		reply(map[string]any{"data": map[string]any{"batch_results": results}})
 	case "/v1/auth/token/renew-self":
 		reply(map[string]any{"auth": map[string]any{"lease_duration": 86400}})
 	default:

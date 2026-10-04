@@ -15,6 +15,7 @@ import (
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/app"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/audit"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/identity"
+	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/login"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/profile"
 )
 
@@ -187,6 +188,9 @@ type Identities struct {
 	// successful removals.
 	RemoveNameErr error
 	NameRemoved   []uuid.UUID
+	// ReplaceLoginErr / MarkVerifiedErr fail the login migration steps.
+	ReplaceLoginErr error
+	MarkVerifiedErr error
 }
 
 // NewIdentities creates an empty fake.
@@ -231,7 +235,7 @@ func (f *Identities) ListIdentities(_ context.Context, q app.IdentityQuery) ([]i
 	}
 	var out []identity.Identity
 	for _, i := range f.M {
-		if q.Email != "" && i.Email != q.Email {
+		if q.Email != "" && i.Email != q.Email && i.LoginID != q.Email {
 			continue
 		}
 		out = append(out, i)
@@ -368,6 +372,8 @@ type Store struct {
 	Idem     map[string]app.IdempotencyRecord
 	Keys     map[uuid.UUID]app.SubjectKey   // by identity id
 	PII      map[uuid.UUID]app.EncryptedPII // by identity id
+	Logins   map[login.Pseudonym]app.LoginRecord
+	Dispatch map[[32]byte]fakeDispatch
 	Clock    app.Clock
 	nextID   int64
 
@@ -376,6 +382,8 @@ type Store struct {
 	AuditErr  error
 	CommitErr error
 	TxErrOnce error
+	// LoginErr fails login repo batch reads.
+	LoginErr error
 
 	txMu sync.Mutex // transactions run serially (models the advisory lock)
 	// LockCalls counts XactLock calls.
@@ -387,6 +395,7 @@ func NewStore(c app.Clock) *Store {
 	return &Store{
 		Profiles: map[uuid.UUID]profile.Profile{}, Idem: map[string]app.IdempotencyRecord{}, Clock: c,
 		Keys: map[uuid.UUID]app.SubjectKey{}, PII: map[uuid.UUID]app.EncryptedPII{},
+		Logins: map[login.Pseudonym]app.LoginRecord{}, Dispatch: map[[32]byte]fakeDispatch{},
 	}
 }
 
@@ -402,6 +411,7 @@ func (s *Store) Repos() app.Repos {
 	return app.Repos{
 		Profiles: profileRepo{s}, Audit: auditRepo{s}, Idempotency: idemRepo{s}, Locks: noLock{},
 		SubjectKeys: subjectKeyRepo{s}, PersonalInfo: piiRepo{s},
+		Logins: loginRepo{s}, Dispatches: dispatchRepo{s},
 	}
 }
 
@@ -434,6 +444,10 @@ func (s *Store) WithinTx(ctx context.Context, fn func(context.Context, app.Repos
 	for k, v := range s.PII {
 		snapPII[k] = v
 	}
+	snapLogins := make(map[login.Pseudonym]app.LoginRecord, len(s.Logins))
+	for k, v := range s.Logins {
+		snapLogins[k] = v
+	}
 	s.mu.Unlock()
 
 	r := s.Repos()
@@ -445,7 +459,7 @@ func (s *Store) WithinTx(ctx context.Context, fn func(context.Context, app.Repos
 	if err != nil {
 		s.mu.Lock()
 		s.Profiles, s.Idem, s.Events = snapProfiles, snapIdem, s.Events[:snapEvents]
-		s.Keys, s.PII = snapKeys, snapPII
+		s.Keys, s.PII, s.Logins = snapKeys, snapPII, snapLogins
 		s.mu.Unlock()
 	}
 	return err
@@ -615,9 +629,27 @@ func (r idemRepo) Purge(_ context.Context, before time.Time) (int64, error) {
 
 // Mailer records invitations.
 type Mailer struct {
-	mu   sync.Mutex
-	Sent []app.Invitation
-	Err  error
+	mu        sync.Mutex
+	Sent      []app.Invitation
+	LoginSent []LoginMessage
+	Err       error
+}
+
+// LoginMessage is one recorded login message.
+type LoginMessage struct {
+	To      string
+	Message login.Message
+}
+
+// SendLoginMessage implements app.Mailer.
+func (m *Mailer) SendLoginMessage(_ context.Context, to string, msg login.Message) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.Err != nil {
+		return m.Err
+	}
+	m.LoginSent = append(m.LoginSent, LoginMessage{To: to, Message: msg})
+	return nil
 }
 
 // SendInvitation implements app.Mailer.

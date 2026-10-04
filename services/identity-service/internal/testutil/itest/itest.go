@@ -43,6 +43,10 @@ type Env struct {
 	// ClientTagKey is the in-process service's M2M_CLIENT_TAG_KEY (tests run
 	// their own service instance, so any ≥ 32-byte key works).
 	ClientTagKey []byte
+	// API is the running stack's identity-service (login identifier
+	// resolution; it shares the database and OpenBao keys with in-process
+	// test services, so pseudonyms match).
+	API string
 }
 
 // RepoRoot walks up from the working directory to the repository root
@@ -97,6 +101,7 @@ func Load() Env {
 		HydraPublic:  getenv("HYDRA_PUBLIC_URL", "http://localhost:4444"),
 		HydraIssuer:  getenv("M2M_ISSUER", "http://localhost:4444"),
 		ClientTagKey: []byte("itest-only-client-tag-key-000000"),
+		API:          getenv("API_URL", "http://localhost:8080"),
 	}
 }
 
@@ -200,17 +205,34 @@ func (f Flow) TOTPSecret() string {
 	return ""
 }
 
-// RegisterCustomer registers via the native API flow and returns the flow
-// response (session token, identity id, verification flow id).
+// Resolve returns the pseudonymous login identifier of an email or phone
+// (POST /v1/auth/identifiers, ADR-0013).
+func (e Env) Resolve(t *testing.T, kind, value, purpose string) string {
+	t.Helper()
+	var out struct {
+		Identifier string `json:"identifier"`
+	}
+	st, _ := JSON(t, nil, "POST", e.API+"/v1/auth/identifiers", nil,
+		map[string]any{"type": kind, "value": value, "purpose": purpose}, &out)
+	if st != 200 || out.Identifier == "" {
+		t.Fatalf("resolve %s: %d", purpose, st)
+	}
+	return out.Identifier
+}
+
+// RegisterCustomer resolves the email, registers via the native API flow
+// with the pseudonym and returns the flow response (session token, identity
+// id).
 func (e Env) RegisterCustomer(t *testing.T, email string) Flow {
 	t.Helper()
+	loginID := e.Resolve(t, "email", email, "registration")
 	var flow Flow
 	if st, _ := JSON(t, nil, "GET", e.KratosPublic+"/self-service/registration/api", nil, nil, &flow); st != 200 {
 		t.Fatalf("registration flow: %d", st)
 	}
 	var out Flow
 	st, _ := JSON(t, nil, "POST", e.KratosPublic+"/self-service/registration?flow="+flow.ID, nil, map[string]any{
-		"method": "password", "password": Password, "traits": map[string]any{"email": email},
+		"method": "password", "password": Password, "traits": map[string]any{"login_id": loginID},
 	}, &out)
 	if st != 200 || out.SessionToken == "" {
 		t.Fatalf("register: %d %+v", st, out.UI.Messages)
@@ -247,6 +269,13 @@ func (e Env) LoginAPI(t *testing.T, email string) (int, Flow) {
 	st, _ := JSON(t, nil, "POST", e.KratosPublic+"/self-service/login?flow="+flow.ID, nil,
 		map[string]any{"method": "password", "identifier": email, "password": Password}, &out)
 	return st, out
+}
+
+// LoginCustomerAPI resolves the customer's email and logs in via the
+// native API flow with the pseudonym.
+func (e Env) LoginCustomerAPI(t *testing.T, email string) (int, Flow) {
+	t.Helper()
+	return e.LoginAPI(t, e.Resolve(t, "email", email, "sign_in"))
 }
 
 // Browser is a cookie-carrying browser-flow client.
@@ -395,14 +424,34 @@ func (e Env) mailIDs(t *testing.T, addr string) []string {
 
 // VerifyEmail runs a native verification flow: request a code, read it from
 // Mailpit, submit it. (The registration response carries no
-// show_verification_ui continue_with in this Kratos config.)
+// show_verification_ui continue_with in this Kratos config.) Codes travel
+// through the Kratos http courier and identity-service (ADR-0013), so the
+// registration mail can land late: wait for it first so its code is not
+// mistaken for ours, and retry with a new flow if the code was not accepted.
 func (e Env) VerifyEmail(t *testing.T, email string) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for len(e.mailIDs(t, email)) == 0 && time.Now().Before(deadline) {
+		time.Sleep(300 * time.Millisecond)
+	}
+	for attempt := 1; ; attempt++ {
+		state := e.verifyOnce(t, email)
+		if state == "passed_challenge" {
+			return
+		}
+		if attempt == 3 {
+			t.Fatalf("verification not accepted: state %q", state)
+		}
+	}
+}
+
+func (e Env) verifyOnce(t *testing.T, email string) string {
 	t.Helper()
 	before := len(e.mailIDs(t, email))
 	var flow Flow
 	JSON(t, nil, "GET", e.KratosPublic+"/self-service/verification/api", nil, nil, &flow)
 	if st, _ := JSON(t, nil, "POST", e.KratosPublic+"/self-service/verification?flow="+flow.ID, nil,
-		map[string]any{"method": "code", "email": email}, nil); st != 200 {
+		map[string]any{"method": "code", "email": e.Resolve(t, "email", email, "verification")}, nil); st != 200 {
 		t.Fatalf("request verification code: %d", st)
 	}
 	var newest string
@@ -425,11 +474,14 @@ func (e Env) VerifyEmail(t *testing.T, email string) {
 	if m == nil {
 		t.Fatal("no code in verification email")
 	}
-	var out Flow
+	var out struct {
+		State string `json:"state"`
+	}
 	if st, _ := JSON(t, nil, "POST", e.KratosPublic+"/self-service/verification?flow="+flow.ID, nil,
 		map[string]any{"method": "code", "code": m[1]}, &out); st != 200 {
-		t.Fatalf("verify: %d %+v", st, out.UI.Messages)
+		t.Fatalf("verify: %d", st)
 	}
+	return out.State
 }
 
 // JWKSURL is Hydra's public key set.

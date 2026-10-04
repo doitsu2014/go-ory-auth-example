@@ -68,6 +68,11 @@ func writeProblem(w http.ResponseWriter, r *http.Request, code, detail string, f
 		code, spec = CodeInternal, problemSpecs[CodeInternal]
 	}
 	p := gen.Problem{Type: problemBase + spec.slug, Title: spec.title, Status: spec.status, Code: code}
+	if code == CodeRateLimited && w.Header().Get("Retry-After") == "" {
+		// Sliding windows have no single reset time; one minute is the
+		// shortest window of every limit (api-contract §3).
+		w.Header().Set("Retry-After", "60")
+	}
 	if detail != "" {
 		p.Detail = &detail
 	}

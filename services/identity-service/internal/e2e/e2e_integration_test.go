@@ -31,6 +31,7 @@ import (
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/adapter/postgres"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/app"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/identity"
+	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/login"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/platform"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/testutil/itest"
 )
@@ -39,6 +40,7 @@ const webOrigin = "http://localhost:5173"
 
 type stack struct {
 	kadmin   *kratos.Admin
+	logins   *app.LoginIdentifierService
 	env      itest.Env
 	srv      *httptest.Server
 	verifier *kratos.SessionVerifier
@@ -128,6 +130,10 @@ func newStackWith(t *testing.T, o stackOpts) *stack {
 		SubjectKeys: repos.SubjectKeys, Records: repos.PersonalInfo, Clock: app.SystemClock{}, Log: log,
 		LookupLimiter: app.NewRateLimiter(app.LookupRateRules, nil), RevealLimiter: app.NewRateLimiter(app.RevealRateRules, nil),
 	}
+	logins := &app.LoginIdentifierService{Keys: bao, Logins: repos.Logins, Tx: store, Identities: kadmin,
+		Phone: login.PhonePolicy{DefaultCountry: "84", AllowedCountries: []string{"84"}}, PhoneEnabled: true,
+		Phase: app.PhaseTransition, Clock: app.SystemClock{}, Log: log}
+	pi.Logins = logins
 	hadmin, err := hydra.NewAdmin(env.HydraAdmin, "identity-service", env.ClientTagKey, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -142,8 +148,9 @@ func newStackWith(t *testing.T, o stackOpts) *stack {
 		Machine: &app.MachineService{Identities: kadmin, Audit: repos.Audit},
 		ServiceClients: &app.ServiceClientService{Authz: authz, Clients: hadmin, Verifier: mverifier, Tx: store,
 			Idempotency: repos.Idempotency, Clock: app.SystemClock{}, Log: log},
-		Me:           &app.MeService{Profiles: repos.Profiles},
-		Customers:    &app.CustomerService{Authz: authz, Identities: kadmin, Profiles: repos.Profiles, Tx: store, Sessions: verifier, Log: log},
+		Me:           &app.MeService{Profiles: repos.Profiles, Logins: logins},
+		Customers:    &app.CustomerService{Authz: authz, Identities: kadmin, Profiles: repos.Profiles, Tx: store, Sessions: verifier, Log: log, Logins: logins},
+		Logins:       logins,
 		Admins:       admins,
 		Audit:        &app.AuditService{Authz: authz, Audit: repos.Audit},
 		PersonalInfo: pi,
@@ -159,7 +166,7 @@ func newStackWith(t *testing.T, o stackOpts) *stack {
 	}
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	return &stack{kadmin: kadmin, env: env, srv: srv, verifier: verifier, keto: k, admins: admins,
+	return &stack{logins: logins, kadmin: kadmin, env: env, srv: srv, verifier: verifier, keto: k, admins: admins,
 		store: store, pool: pool, bao: bao, pii: pi, logs: logs, hydra: hadmin, machine: mverifier}
 }
 
@@ -242,12 +249,12 @@ func TestFR08_E2E_CustomerPlane(t *testing.T) {
 
 	// Spike S3: customer on a browser login flow is interrupted by the webhook.
 	b := s.env.NewBrowser()
-	st, f := b.Login(t, email, "")
+	st, f := b.Login(t, s.env.Resolve(t, "email", email, "sign_in"), "")
 	if st != 400 || !hasMessage(f, httpapi.LoginInterruptMessageID) || b.SessionCookie() != "" {
 		t.Fatalf("customer browser login must be interrupted: %d %+v cookie=%v", st, f.UI.Messages, b.SessionCookie() != "")
 	}
 	// ...while the API flow works.
-	if st, f := s.env.LoginAPI(t, email); st != 200 || f.SessionToken == "" {
+	if st, f := s.env.LoginCustomerAPI(t, email); st != 200 || f.SessionToken == "" {
 		t.Fatalf("customer api login: %d", st)
 	}
 }
@@ -334,14 +341,21 @@ func TestFR06_E2E_AdminPlane(t *testing.T) {
 	if st := s.api(t, "GET", "/v1/me", call{bearer: reg.SessionToken}, nil, nil); st != 200 {
 		t.Fatalf("customer before disable: %d", st)
 	}
-	var page struct {
+	var found struct {
 		Items []struct {
 			ID    uuid.UUID `json:"id"`
-			State string    `json:"state"`
+			Login struct {
+				Type, Masked string
+			} `json:"login"`
 		} `json:"items"`
 	}
-	if st := s.api(t, "GET", "/admin/v1/customers?email="+custEmail, call{cookie: cookie}, nil, &page); st != 200 || len(page.Items) != 1 || page.Items[0].ID != custID {
-		t.Fatalf("list by email: %d %+v", st, page)
+	if st := s.api(t, "POST", "/admin/v1/customers/lookup", call{cookie: cookie, origin: webOrigin},
+		map[string]any{"login": map[string]string{"type": "email", "value": custEmail}}, &found); st != 200 || len(found.Items) != 1 ||
+		found.Items[0].ID != custID || found.Items[0].Login.Type != "email" {
+		t.Fatalf("lookup by login: %d %+v", st, found)
+	}
+	if st := s.api(t, "GET", "/admin/v1/customers?email="+custEmail, call{cookie: cookie}, nil, &p); st != 400 {
+		t.Fatalf("the email query parameter must be refused (PII never in URLs): %d", st)
 	}
 	if st := s.api(t, "GET", "/admin/v1/customers/"+adminID.String(), call{cookie: cookie}, nil, &p); st != 404 {
 		t.Fatalf("admin id via customers must be 404: %d", st)

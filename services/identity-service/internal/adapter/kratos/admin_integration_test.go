@@ -111,7 +111,8 @@ func TestFR08_VerifierAgainstKratos(t *testing.T) {
 	v := NewSessionVerifier(env.KratosPublic, nil, nil)
 	ctx := context.Background()
 	p, err := v.Verify(ctx, app.Credential{Kind: app.CredentialToken, Value: reg.SessionToken})
-	if err != nil || p.Kind != identity.KindCustomer || p.Email != email || p.EmailVerified || p.AAL != identity.AAL1 || p.SessionID == uuid.Nil {
+	if err != nil || p.Kind != identity.KindCustomer || p.Email != "" || p.LoginID != env.Resolve(t, "email", email, "sign_in") ||
+		p.EmailVerified || p.AAL != identity.AAL1 || p.SessionID == uuid.Nil {
 		t.Fatalf("verify: %+v %v", p, err)
 	}
 	if _, err := v.Verify(ctx, app.Credential{Kind: app.CredentialToken, Value: "ory_st_invalid"}); !errors.Is(err, app.ErrUnauthenticated) {

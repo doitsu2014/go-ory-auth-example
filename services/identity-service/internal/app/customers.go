@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 
 	"github.com/google/uuid"
 
@@ -37,11 +36,14 @@ func ClampPageSize(n int) int {
 type CustomerView struct {
 	Identity    identity.Identity
 	DisplayName *string
+	// Login is the masked login identifier (PLI-FR-10); nil when it could
+	// not be read. LoginUnavailable reports a key-manager failure.
+	Login            *MaskedLogin
+	LoginUnavailable bool
 }
 
 // CustomerQuery filters the customer list.
 type CustomerQuery struct {
-	Email     string
 	State     *identity.State
 	PageSize  int
 	PageToken string
@@ -61,6 +63,8 @@ type CustomerService struct {
 	Tx         TxRunner
 	Sessions   SessionVerifier
 	Log        *slog.Logger
+	// Logins masks login identifiers (ADR-0013); nil leaves Login unset.
+	Logins *LoginIdentifierService
 }
 
 // List lists customers. Permission: view_customers.
@@ -73,10 +77,9 @@ func (s *CustomerService) List(ctx context.Context, a Actor, q CustomerQuery) (C
 	}
 	size := ClampPageSize(q.PageSize)
 	token := q.PageToken
-	q.Email = strings.ToLower(strings.TrimSpace(q.Email))
 	var out []identity.Identity
 	for range maxKratosPagesPerList {
-		items, next, err := s.Identities.ListIdentities(ctx, IdentityQuery{Email: q.Email, PageSize: size, PageToken: token})
+		items, next, err := s.Identities.ListIdentities(ctx, IdentityQuery{PageSize: size, PageToken: token})
 		if err != nil {
 			return CustomerPage{}, fmt.Errorf("list identities: %w", err)
 		}
@@ -215,10 +218,18 @@ func (s *CustomerService) withProfiles(ctx context.Context, ids []identity.Ident
 	if err != nil {
 		return nil, fmt.Errorf("get profiles: %w", err)
 	}
+	var masked map[uuid.UUID]MaskedLogin
+	unavailable := false
+	if s.Logins != nil {
+		masked, unavailable = s.Logins.MaskMany(ctx, ids)
+	}
 	for _, it := range ids {
-		v := CustomerView{Identity: it}
+		v := CustomerView{Identity: it, LoginUnavailable: unavailable}
 		if p, ok := profiles[it.ID]; ok {
 			v.DisplayName = p.DisplayName
+		}
+		if m, ok := masked[it.ID]; ok {
+			v.Login = &m
 		}
 		views = append(views, v)
 	}

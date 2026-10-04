@@ -91,3 +91,27 @@ func TestLocalKMS_KeysAndFailure(t *testing.T) {
 		t.Fatal("failure injection")
 	}
 }
+
+func TestLocalKMS_LoginKeys(t *testing.T) {
+	m := NewRandom()
+	ctx := context.Background()
+	p1, _ := m.Pseudonym(ctx, []byte("in"))
+	p2, _ := m.Pseudonym(ctx, []byte("in"))
+	b, _ := m.BlindIndex(ctx, []byte("in"))
+	if p1 != p2 || bytes.Equal(p1[:], b.Sum) {
+		t.Fatal("pseudonym must be deterministic and keyed separately from the blind index")
+	}
+	ct, v, err := m.SealLogin(ctx, []byte("ad"), []byte("alice@example.com"))
+	if err != nil || v != 1 {
+		t.Fatal(err)
+	}
+	m.Rotate()
+	ct2, v2, _ := m.SealLogin(ctx, []byte("ad"), []byte("bob@example.com"))
+	pts, errs, err := m.OpenLogins(ctx, []app.SealedLogin{{AD: []byte("ad"), Ciphertext: ct}, {AD: []byte("other"), Ciphertext: ct2}, {AD: []byte("ad"), Ciphertext: ct2}})
+	if err != nil || v2 != 2 || string(pts[0]) != "alice@example.com" || string(pts[2]) != "bob@example.com" {
+		t.Fatalf("%q %v %v", pts, errs, err)
+	}
+	if !errors.Is(errs[1], app.ErrDataIntegrity) {
+		t.Fatal("wrong AD must fail")
+	}
+}

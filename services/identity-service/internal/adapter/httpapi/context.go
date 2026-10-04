@@ -25,11 +25,19 @@ const (
 	PlaneAdmin
 	// PlaneMachine is /m2m/v1: Hydra client_credentials JWTs only.
 	PlaneMachine
+	// PlanePublic is /v1/auth/*: no credential, rate limited per client IP
+	// (login identifier resolution, ADR-0013).
+	PlanePublic
 )
+
+// publicPrefix is the unauthenticated part of the customer API.
+const publicPrefix = "/v1/auth/"
 
 func planeOf(r *http.Request) Plane {
 	p := r.URL.Path
 	switch {
+	case strings.HasPrefix(p, publicPrefix):
+		return PlanePublic
 	case p == "/v1" || strings.HasPrefix(p, "/v1/"):
 		return PlaneCustomer
 	case p == "/admin/v1" || strings.HasPrefix(p, "/admin/v1/"):
@@ -187,4 +195,16 @@ func routingPath(r *http.Request) string {
 		return r.URL.RawPath
 	}
 	return r.URL.Path
+}
+
+type publicIPKey struct{}
+
+func withPublicClientIP(ctx context.Context, ip netip.Addr) context.Context {
+	return context.WithValue(ctx, publicIPKey{}, ip)
+}
+
+// PublicClientIPFrom returns the client IP of a public-plane request.
+func PublicClientIPFrom(ctx context.Context) (netip.Addr, bool) {
+	ip, ok := ctx.Value(publicIPKey{}).(netip.Addr)
+	return ip, ok
 }

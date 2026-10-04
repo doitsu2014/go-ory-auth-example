@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"net/netip"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/audit"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/identity"
+	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/login"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/machine"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/profile"
 )
@@ -288,6 +290,140 @@ type Repos struct {
 	Locks        Locker
 	SubjectKeys  SubjectKeyRepo
 	PersonalInfo CustomerPIIRepo
+	Logins       LoginIdentifierRepo
+	Dispatches   CourierDispatchRepo
+}
+
+// LoginKeys computes login pseudonyms and seals login identifiers in the key
+// manager (PLI DD-01, DD-03). The HMAC key and the encryption key are
+// distinct and never leave the key manager.
+// Errors: ErrDependencyUnavailable, ErrDataIntegrity (OpenLogins
+// authentication failure). Errors never carry inputs or key material.
+type LoginKeys interface {
+	// Pseudonym returns the keyed HMAC of input (pinned key version).
+	Pseudonym(ctx context.Context, input []byte) (login.Pseudonym, error)
+	// SealLogin encrypts plaintext bound to ad; the ciphertext is opaque
+	// ("vault:vN:…") and kekVersion is N.
+	SealLogin(ctx context.Context, ad, plaintext []byte) (ciphertext string, kekVersion int, err error)
+	// OpenLogins decrypts items in one round trip, in order. A per-item
+	// authentication failure yields a nil entry and ErrDataIntegrity in errs
+	// at the same index; a transport failure fails the whole call.
+	OpenLogins(ctx context.Context, items []SealedLogin) (plaintexts [][]byte, errs []error, err error)
+}
+
+// SealedLogin is one OpenLogins input.
+type SealedLogin struct {
+	AD         []byte
+	Ciphertext string
+}
+
+// LoginRecord is a login_identifier row: the encrypted login identifier
+// stored under its pseudonym (PLI-FR-02).
+type LoginRecord struct {
+	Pseudonym       login.Pseudonym
+	Kind            login.Kind
+	Ciphertext      string
+	KEKVersion      int
+	IdentityID      *uuid.UUID
+	BoundAt         *time.Time
+	LegacyVerified  bool
+	CreatedAt       time.Time
+	LastValidatedAt time.Time
+}
+
+// LoginIdentifierRepo stores encrypted login identifiers. Errors never carry
+// column values.
+type LoginIdentifierRepo interface {
+	// InsertIfAbsent stores r unless the pseudonym exists.
+	InsertIfAbsent(ctx context.Context, r LoginRecord) (inserted bool, err error)
+	// Get returns the record or ErrNotFound.
+	Get(ctx context.Context, p login.Pseudonym) (LoginRecord, error)
+	// GetMany returns the records that exist.
+	GetMany(ctx context.Context, ps []login.Pseudonym) (map[login.Pseudonym]LoginRecord, error)
+	// GetByIdentity returns the record bound to the identity or ErrNotFound.
+	GetByIdentity(ctx context.Context, id uuid.UUID) (LoginRecord, error)
+	// Bind binds the record to id when it is unbound or already bound to id;
+	// with stale non-nil it also replaces exactly that binding (the caller
+	// has checked that identity is gone). bound=false otherwise.
+	// ErrConflict when id is bound to another record.
+	Bind(ctx context.Context, p login.Pseudonym, id uuid.UUID, stale *uuid.UUID) (bound bool, err error)
+	// SetLegacyVerified records the verification state of a migrated login.
+	SetLegacyVerified(ctx context.Context, p login.Pseudonym, verified bool) error
+	// Touch sets last_validated_at = now() (pre-registration check, A10).
+	Touch(ctx context.Context, p login.Pseudonym) error
+	// ListStaleUnbound returns up to limit unbound records not validated
+	// since before, oldest first.
+	ListStaleUnbound(ctx context.Context, before time.Time, limit int) ([]LoginRecord, error)
+	// DeleteStaleUnbound deletes the record only while it is still unbound
+	// and not validated since before (A10: a concurrent registration wins).
+	DeleteStaleUnbound(ctx context.Context, p login.Pseudonym, before time.Time) (deleted bool, err error)
+	// ListBound pages bound records ordered by pseudonym after the given one.
+	ListBound(ctx context.Context, after login.Pseudonym, limit int) ([]LoginRecord, error)
+	// ListAll pages every record ordered by pseudonym (re-wrap).
+	ListAll(ctx context.Context, after login.Pseudonym, limit int) ([]LoginRecord, error)
+	// Delete removes the record; with onlyIfUnbound it keeps a bound one.
+	Delete(ctx context.Context, p login.Pseudonym, onlyIfUnbound bool) (deleted bool, err error)
+	// DeleteForIdentity removes the record bound to the identity.
+	DeleteForIdentity(ctx context.Context, id uuid.UUID) (deleted bool, err error)
+	// UpdateCiphertext replaces the ciphertext if it still equals old.
+	UpdateCiphertext(ctx context.Context, p login.Pseudonym, old, ciphertext string, kekVersion int) (bool, error)
+	// CountUnbound returns the number of unbound records.
+	CountUnbound(ctx context.Context) (int64, error)
+	// DeleteErased deletes records bound to identities with a
+	// customer.login.erased audit event (erasure ledger).
+	DeleteErased(ctx context.Context) (int64, error)
+}
+
+// CourierDispatchRepo de-duplicates courier deliveries (A9): a key is
+// reserved before sending and marked sent afterwards.
+type CourierDispatchRepo interface {
+	// Reserve claims key. reserved=false when the key was sent, or is pending
+	// and newer than staleBefore (another delivery is in progress).
+	Reserve(ctx context.Context, key [32]byte, staleBefore time.Time) (reserved bool, err error)
+	// MarkSent finalises a reservation. A delivered message passes its
+	// Delivery (counted by the quotas); a dropped one passes nil.
+	MarkSent(ctx context.Context, key [32]byte, d *Delivery) error
+	// CountDeliveriesTo counts deliveries to a recipient key since t.
+	CountDeliveriesTo(ctx context.Context, recipientKey [32]byte, since time.Time) (int64, error)
+	// CountSMS counts SMS deliveries since t, for one calling code or all ("").
+	CountSMS(ctx context.Context, country string, since time.Time) (int64, error)
+	// Release drops a pending reservation so a retry can send.
+	Release(ctx context.Context, key [32]byte) error
+	// Purge deletes keys older than before.
+	Purge(ctx context.Context, before time.Time) (int64, error)
+}
+
+// Delivery describes a delivered courier message for quota accounting.
+type Delivery struct {
+	Channel      string
+	Country      string // SMS calling code, "" for email
+	RecipientKey [32]byte
+}
+
+// ErrPermanentDelivery marks a delivery the provider rejected for good
+// (invalid recipient, SMTP 5xx, SMS 4xx): retrying cannot succeed.
+var ErrPermanentDelivery = errors.New("delivery rejected permanently")
+
+// SMSSender sends a text message to an E.164 number.
+// Errors: ErrDependencyUnavailable (transient). Errors never carry the
+// number or the text.
+type SMSSender interface {
+	SendSMS(ctx context.Context, toE164, text string) error
+}
+
+// LoginTraitAdmin rewrites customer login traits in Kratos (migration,
+// PLI-FR-13) and finds identities by credential identifier.
+type LoginTraitAdmin interface {
+	// ListIdentities pages identities (all schemas).
+	ListIdentities(ctx context.Context, q IdentityQuery) (items []identity.Identity, nextPageToken string, err error)
+	// ReplaceLoginTrait replaces traits.email (legacy) with traits.login_id
+	// only while the identity still has traits.email == oldEmail.
+	// ErrConflict when it changed; ErrNotFound when the identity is gone.
+	ReplaceLoginTrait(ctx context.Context, id uuid.UUID, oldEmail, loginID string) error
+	// MarkLoginVerified marks the verifiable address equal to loginID as
+	// verified (a trait rewrite resets it, spike S4b). ErrNotFound when the
+	// identity or the address is gone.
+	MarkLoginVerified(ctx context.Context, id uuid.UUID, loginID string) error
 }
 
 // TxRunner runs fn in one database transaction. Never span an Ory call.
@@ -308,6 +444,9 @@ type Invitation struct {
 // Mailer sends the service's own emails.
 type Mailer interface {
 	SendInvitation(ctx context.Context, inv Invitation) error
+	// SendLoginMessage sends a verification/recovery message (PLI-FR-05).
+	// Errors never carry the recipient or the message.
+	SendLoginMessage(ctx context.Context, to string, m login.Message) error
 }
 
 // Clock is the time source.

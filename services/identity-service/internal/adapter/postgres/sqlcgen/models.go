@@ -23,6 +23,16 @@ type AuditEvent struct {
 	Details         []byte
 }
 
+type CourierDispatch struct {
+	DedupeKey    []byte
+	State        string
+	Channel      *string
+	Country      *string
+	RecipientKey []byte
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
 type CustomerPii struct {
 	IdentityID     uuid.UUID
 	KeyID          uuid.UUID
@@ -43,6 +53,18 @@ type IdempotencyKey struct {
 	ResponseCode    int32
 	ResponseBody    []byte
 	CreatedAt       time.Time
+}
+
+type LoginIdentifier struct {
+	Pseudonym       []byte
+	Kind            string
+	ValueCt         string
+	KekVersion      int32
+	IdentityID      uuid.NullUUID
+	BoundAt         *time.Time
+	LegacyVerified  bool
+	CreatedAt       time.Time
+	LastValidatedAt time.Time
 }
 
 type Profile struct {

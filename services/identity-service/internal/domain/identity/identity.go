@@ -54,13 +54,20 @@ type Name struct {
 // Principal is the authenticated caller. Handlers only ever see this, never
 // the raw Kratos session.
 type Principal struct {
-	IdentityID        uuid.UUID
-	SessionID         uuid.UUID
-	Kind              Kind
-	AAL               AAL
-	AuthenticatedAt   time.Time
-	ExpiresAt         time.Time
-	Email             string
+	IdentityID      uuid.UUID
+	SessionID       uuid.UUID
+	Kind            Kind
+	AAL             AAL
+	AuthenticatedAt time.Time
+	ExpiresAt       time.Time
+	// Email is the plaintext email trait: admins and legacy (unmigrated)
+	// customers only. A customer with a pseudonymous login has none.
+	Email string
+	// LoginID is the Kratos login identifier: the pseudonym
+	// "<base32>@login.invalid" for customers (ADR-0013), else the email.
+	LoginID string
+	// EmailVerified reports that the login identifier (email or phone) is
+	// verified; the name is kept for compatibility (api-contract §4).
 	EmailVerified     bool
 	Name              Name
 	IdentityCreatedAt time.Time
@@ -154,10 +161,12 @@ var AllPermissions = []Permission{
 
 // Identity is a Kratos identity as seen through the admin API.
 type Identity struct {
-	ID            uuid.UUID
-	SchemaID      string
-	State         State
+	ID       uuid.UUID
+	SchemaID string
+	State    State
+	// Email, LoginID and EmailVerified as in Principal.
 	Email         string
+	LoginID       string
 	EmailVerified bool
 	Name          Name
 	// HasNameTrait reports that traits.name is present, even as an empty
@@ -185,6 +194,9 @@ func (i Identity) MFADeadlineAnchor() time.Time {
 func (i Identity) MFADeadline(grace time.Duration) time.Time {
 	return i.MFADeadlineAnchor().Add(grace)
 }
+
+// IsCustomer reports whether the identity uses the customer schema.
+func (i Identity) IsCustomer() bool { return i.SchemaID == string(KindCustomer) }
 
 // Kind returns the identity kind, if the schema is known.
 func (i Identity) Kind() (Kind, bool) { return ParseKind(i.SchemaID) }

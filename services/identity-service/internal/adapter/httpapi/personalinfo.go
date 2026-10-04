@@ -63,7 +63,15 @@ func (s *Server) LookupCustomers(ctx context.Context, req gen.LookupCustomersReq
 	if req.Body == nil {
 		return nil, app.NewValidationError("body", "required")
 	}
-	res, err := s.PersonalInfo.LookupByPhone(ctx, a, req.Body.PhoneNumber)
+	var res app.LookupResult
+	switch b := req.Body; {
+	case (b.PhoneNumber == nil) == (b.Login == nil):
+		return nil, app.NewValidationError("body", "one_of")
+	case b.Login != nil:
+		res, err = s.PersonalInfo.LookupByLogin(ctx, a, string(b.Login.Type), b.Login.Value)
+	default:
+		res, err = s.PersonalInfo.LookupByPhone(ctx, a, *b.PhoneNumber)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -75,6 +83,10 @@ func (s *Server) LookupCustomers(ctx context.Context, req gen.LookupCustomersReq
 		out.Items[i].Id = m.IdentityID
 		out.Items[i].State = &st
 		out.Items[i].PersonalInfo = toMasked(app.MaskedPersonalInfoView{Masked: m.Masked, UpdatedAt: m.UpdatedAt})
+		if m.Login != nil {
+			ml := toMaskedLogin(*m.Login)
+			out.Items[i].Login = &ml
+		}
 	}
 	return gen.LookupCustomers200JSONResponse(out), nil
 }
@@ -112,7 +124,7 @@ func (s *Server) RevealCustomerPersonalInfo(ctx context.Context, req gen.RevealC
 	if err != nil {
 		return nil, err
 	}
-	return gen.RevealCustomerPersonalInfo200JSONResponse(toPersonalInfo(v)), nil
+	return gen.RevealCustomerPersonalInfo200JSONResponse(toRevealed(v)), nil
 }
 
 // --- conversions ---
@@ -180,6 +192,19 @@ func toPersonalInfo(v app.PersonalInfoView) gen.PersonalInfo {
 	}
 	if n := p.NationalID; n != nil {
 		out.NationalId.Set(gen.NationalId{Type: gen.NationalIdType(n.Type), Number: n.Number})
+	}
+	return out
+}
+
+// toRevealed is toPersonalInfo plus the login identifier (PLI-FR-12).
+func toRevealed(v app.PersonalInfoView) gen.RevealedPersonalInfo {
+	p := toPersonalInfo(v)
+	out := gen.RevealedPersonalInfo{
+		Name: p.Name, PhoneNumber: p.PhoneNumber, DateOfBirth: p.DateOfBirth, Address: p.Address,
+		NationalId: p.NationalId, UpdatedAt: p.UpdatedAt, Login: nullable.NewNullNullable[gen.LoginIdentifier](),
+	}
+	if l := v.Login; l != nil {
+		out.Login.Set(gen.LoginIdentifier{Type: gen.LoginType(l.Kind()), Value: l.Value()})
 	}
 	return out
 }

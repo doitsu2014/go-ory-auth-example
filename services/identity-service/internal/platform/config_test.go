@@ -19,6 +19,36 @@ func validConfig() Config {
 		HydraAdminURL: "https://hydra-admin.internal:4445", M2MJWKSURL: "https://auth.example.com/.well-known/jwks.json",
 		M2MIssuer: "https://auth.example.com", M2MAudience: "identity-service", M2MClientCacheTTL: 30 * time.Second,
 		M2MRateLimitPerMin: 600, M2MClientTagKey: key32("t"),
+		PIIOpenBaoLoginHMACKeyName: "identity-login-pseudonym", PIIOpenBaoLoginKEKName: "identity-login-kek",
+		KratosCourierAPIKey: strings.Repeat("c", 32), CourierDedupeSecret: key32("d"), LoginMigrationPhase: "transition",
+		LoginPhoneDefaultCountry: "84", LoginPhoneAllowedCountries: []string{"84"},
+		LoginResolveRate: "20/1m,200/24h", LoginRegisterRate: "5/1m,30/24h", LoginInsertGlobalRate: "120/1m",
+		CourierRecipientRate: "5/1h,20/24h", SMSProvider: SMSProviderDisabled, SMSDailyBudget: 1000,
+		SMSCountryDailyBudget: 1000, LoginResolveNetRate: "300/1m,5000/24h",
+	}
+}
+
+func TestPLIValidateLogin(t *testing.T) {
+	for name, mut := range map[string]func(*Config){
+		"courier key = webhook key": func(c *Config) { c.KratosCourierAPIKey = c.KratosWebhookAPIKey },
+		"short dedupe secret":       func(c *Config) { c.CourierDedupeSecret = "c2hvcnQ=" },
+		"bad phase":                 func(c *Config) { c.LoginMigrationPhase = "done" },
+		"bad country":               func(c *Config) { c.LoginPhoneAllowedCountries = []string{"+84"} },
+		"bad rate":                  func(c *Config) { c.LoginResolveRate = "20/forever" },
+		"sms sink in production":    func(c *Config) { c.SMSProvider = SMSProviderSink },
+		"sms http without url":      func(c *Config) { c.SMSProvider = SMSProviderHTTP },
+		"login key = pii key":       func(c *Config) { c.PIIOpenBaoLoginKEKName = c.PIIOpenBaoKEKName },
+	} {
+		c := validConfig()
+		mut(&c)
+		if err := c.ValidateServe(); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	c := validConfig()
+	c.AppEnv, c.PIIOpenBaoAddr, c.SMSProvider = "local", "http://openbao:8200", SMSProviderSink
+	if err := c.ValidateServe(); err != nil {
+		t.Fatalf("sink locally: %v", err)
 	}
 }
 

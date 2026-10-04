@@ -13,6 +13,7 @@ import (
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/app"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/audit"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/identity"
+	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/login"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/profile"
 )
 
@@ -28,6 +29,8 @@ type Server struct {
 	// Machine serves /m2m/v1; ServiceClients the admin service-client routes.
 	Machine        *app.MachineService
 	ServiceClients *app.ServiceClientService
+	// Logins serves POST /v1/auth/identifiers (ADR-0013).
+	Logins *app.LoginIdentifierService
 }
 
 var _ gen.StrictServerInterface = (*Server)(nil)
@@ -108,9 +111,6 @@ func (s *Server) ListCustomers(ctx context.Context, req gen.ListCustomersRequest
 		return nil, err
 	}
 	q := app.CustomerQuery{PageSize: size, PageToken: deref(req.Params.PageToken)}
-	if req.Params.Email != nil {
-		q.Email = string(*req.Params.Email)
-	}
 	if req.Params.State != nil {
 		st := identity.State(*req.Params.State)
 		if st != identity.StateActive && st != identity.StateInactive {
@@ -381,22 +381,62 @@ func personName(n identity.Name) *gen.PersonName {
 
 // toMe never fills the deprecated name: a customer's name is encrypted
 // personal info (NAME-FR-07), not a Kratos trait.
+// The login identifier comes from the vault (PLI-FR-07); the deprecated
+// email is set only for email logins.
 func toMe(v app.MeView) gen.Me {
-	return gen.Me{
-		Id: v.Principal.IdentityID, Email: openapi_types.Email(v.Principal.Email), EmailVerified: v.Principal.EmailVerified,
+	out := gen.Me{
+		Id: v.Principal.IdentityID, EmailVerified: v.Principal.EmailVerified,
+		Login:       gen.LoginIdentifier{Type: gen.LoginType(v.Login.Kind()), Value: v.Login.Value()},
 		DisplayName: nullableOf(v.Profile.DisplayName), AvatarUrl: nullableOf(v.Profile.AvatarURL),
 		Locale: v.Profile.Locale, CreatedAt: v.Profile.CreatedAt.UTC(),
 	}
+	if v.Login.Kind() == login.KindEmail {
+		e := openapi_types.Email(v.Login.Value())
+		out.Email = &e
+	}
+	return out
 }
 
 // toCustomer never fills the deprecated name (NAME-FR-07); admins see the
 // masked name through the personal-info endpoints.
+// The customer's contact is only ever the masked login (PLI-FR-10).
 func toCustomer(c app.CustomerView) gen.Customer {
-	return gen.Customer{
-		Id: c.Identity.ID, Email: openapi_types.Email(c.Identity.Email), EmailVerified: c.Identity.EmailVerified,
+	out := gen.Customer{
+		Id: c.Identity.ID, EmailVerified: c.Identity.EmailVerified,
 		State:       gen.IdentityState(c.Identity.State),
 		DisplayName: nullableOf(c.DisplayName), CreatedAt: c.Identity.CreatedAt.UTC(),
+		Login: nullable.NewNullNullable[gen.MaskedLogin](), LoginUnavailable: c.LoginUnavailable,
 	}
+	if c.Login != nil {
+		out.Login.Set(toMaskedLogin(*c.Login))
+	}
+	return out
+}
+
+func toMaskedLogin(m app.MaskedLogin) gen.MaskedLogin {
+	return gen.MaskedLogin{Type: gen.LoginType(m.Kind), Masked: m.Masked}
+}
+
+// ResolveLoginIdentifier implements POST /v1/auth/identifiers (public).
+func (s *Server) ResolveLoginIdentifier(ctx context.Context, req gen.ResolveLoginIdentifierRequestObject) (gen.ResolveLoginIdentifierResponseObject, error) {
+	if req.Body == nil {
+		return nil, app.NewValidationError("body", "required")
+	}
+	ip, ok := PublicClientIPFrom(ctx)
+	if !ok || s.Logins == nil {
+		return nil, app.ErrDependencyUnavailable
+	}
+	id, err := s.Logins.Resolve(ctx, app.ResolveRequest{
+		ClientIP: ip, Type: string(req.Body.Type), Value: req.Body.Value, Purpose: string(req.Body.Purpose),
+	})
+	if err != nil {
+		return nil, err
+	}
+	noStore := "no-store"
+	return gen.ResolveLoginIdentifier200JSONResponse{
+		Body:    gen.ResolvedLoginIdentifier{Identifier: id},
+		Headers: gen.ResolveLoginIdentifier200ResponseHeaders{CacheControl: &noStore},
+	}, nil
 }
 
 // toAdmin converts an admin. The contract requires a role; an admin identity

@@ -10,8 +10,11 @@ import (
 )
 
 type traits struct {
-	Email string `json:"email"`
-	Name  *struct {
+	// Email is the admin email, or a legacy customer email (pre ADR-0013).
+	Email string `json:"email,omitempty"`
+	// LoginID is a customer's pseudonymous login identifier (ADR-0013).
+	LoginID string `json:"login_id,omitempty"`
+	Name    *struct {
 		First string `json:"first,omitempty"`
 		Last  string `json:"last,omitempty"`
 	} `json:"name,omitempty"`
@@ -49,9 +52,21 @@ type kSession struct {
 	Identity        kIdentity `json:"identity"`
 }
 
+// loginID is the credential identifier: the pseudonym when present, else
+// the email.
+func (t traits) loginID() string {
+	if t.LoginID != "" {
+		return t.LoginID
+	}
+	return t.Email
+}
+
+// emailVerified reports whether the login identifier's verifiable address
+// is verified. Kratos uses the email channel for pseudonyms too.
 func (k kIdentity) emailVerified() bool {
+	id := k.Traits.loginID()
 	for _, a := range k.VerifiableAddresses {
-		if a.Via == "email" && strings.EqualFold(a.Value, k.Traits.Email) {
+		if a.Via == "email" && strings.EqualFold(a.Value, id) {
 			return a.Verified
 		}
 	}
@@ -72,6 +87,7 @@ func (k kIdentity) toDomain() identity.Identity {
 		SchemaID:      k.SchemaID,
 		State:         identity.State(k.State),
 		Email:         k.Traits.Email,
+		LoginID:       k.Traits.loginID(),
 		EmailVerified: k.emailVerified(),
 		Name:          k.name(),
 		HasNameTrait:  k.Traits.Name != nil,
@@ -102,6 +118,7 @@ func (s kSession) toPrincipal() (identity.Principal, bool) {
 		AuthenticatedAt:   s.AuthenticatedAt,
 		ExpiresAt:         s.ExpiresAt,
 		Email:             s.Identity.Traits.Email,
+		LoginID:           s.Identity.Traits.loginID(),
 		EmailVerified:     s.Identity.emailVerified(),
 		Name:              s.Identity.name(),
 		IdentityCreatedAt: s.Identity.CreatedAt,

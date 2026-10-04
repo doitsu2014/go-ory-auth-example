@@ -16,6 +16,7 @@ import (
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/crypto/envelope"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/audit"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/identity"
+	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/login"
 	"github.com/doitsu-technology/go-ory-auth-example/services/identity-service/internal/domain/pii"
 )
 
@@ -58,6 +59,8 @@ type RevealRequest struct {
 type PersonalInfoView struct {
 	Info      pii.PersonalInfo
 	UpdatedAt *time.Time
+	// Login is the customer's login identifier (admin reveal only).
+	Login *login.Identifier
 }
 
 // MaskedPersonalInfoView is the admin (masked) view.
@@ -81,6 +84,8 @@ type LookupMatch struct {
 	State      identity.State
 	Masked     pii.Masked
 	UpdatedAt  *time.Time
+	// Login is the masked login identifier (login lookups only).
+	Login *MaskedLogin
 }
 
 // PersonalInfoService implements the personal information use cases
@@ -103,6 +108,9 @@ type PersonalInfoService struct {
 	// disables that step (customers created after the schema change have no
 	// name trait).
 	NameTraits NameTraitAdmin
+	// Logins reveals and looks up login identifiers (ADR-0013); nil
+	// disables the "login" reveal field and login lookups.
+	Logins *LoginIdentifierService
 	// Per-actor quotas (nil = unlimited). LookupLimiter is charged per
 	// candidate unwrapped (§9 A11).
 	LookupLimiter *RateLimiter
@@ -317,24 +325,43 @@ func (s *PersonalInfoService) Reveal(ctx context.Context, a Actor, id uuid.UUID,
 	if err := require(ctx, s.Authz, a, identity.PermRevealCustomerPII); err != nil {
 		return PersonalInfoView{}, err
 	}
-	fields, err := validateReveal(req)
+	fields, withLogin, err := s.revealFields(req)
 	if err != nil {
 		return PersonalInfoView{}, err
 	}
 	if !s.RevealLimiter.Allow(a.Principal.IdentityID) {
 		return PersonalInfoView{}, ErrRateLimited
 	}
-	if _, err := s.customer(ctx, id); err != nil {
-		return PersonalInfoView{}, err
-	}
-	cols, rec, found, err := s.decrypt(ctx, id, fields)
-	defer zeroColumns(cols)
+	ident, err := s.customer(ctx, id)
 	if err != nil {
 		return PersonalInfoView{}, err
 	}
-	names := make([]string, len(fields))
-	for i, f := range fields {
-		names[i] = string(f)
+	var (
+		cols  map[pii.Field][]byte
+		rec   EncryptedPII
+		found bool
+	)
+	if len(fields) > 0 {
+		cols, rec, found, err = s.decrypt(ctx, id, fields)
+		defer zeroColumns(cols)
+		if err != nil {
+			return PersonalInfoView{}, err
+		}
+	}
+	var loginID *login.Identifier
+	if withLogin && ident.LoginID != "" { // an identity without a login has none to reveal
+		l, err := s.Logins.Reveal(ctx, ident)
+		if err != nil {
+			return PersonalInfoView{}, err
+		}
+		loginID = &l
+	}
+	names := make([]string, 0, len(fields)+1)
+	for _, f := range fields {
+		names = append(names, string(f))
+	}
+	if withLogin {
+		names = append(names, RevealFieldLogin)
 	}
 	details := map[string]any{"fields": names, "reason_code": string(req.ReasonCode)}
 	if req.TicketRef != nil {
@@ -344,14 +371,49 @@ func (s *PersonalInfoService) Reveal(ctx context.Context, a Actor, id uuid.UUID,
 		return PersonalInfoView{}, fmt.Errorf("audit reveal: %w", err)
 	}
 	if !found {
-		return PersonalInfoView{}, nil
+		return PersonalInfoView{Login: loginID}, nil
 	}
 	info, err := s.decode(id, cols)
 	if err != nil {
 		return PersonalInfoView{}, err
 	}
 	updated := rec.UpdatedAt
-	return PersonalInfoView{Info: info, UpdatedAt: &updated}, nil
+	return PersonalInfoView{Info: info, UpdatedAt: &updated, Login: loginID}, nil
+}
+
+// RevealFieldLogin is the reveal field of the login identifier (PLI-FR-12).
+const RevealFieldLogin = "login"
+
+// revealFields splits the requested fields into personal info fields and
+// the login identifier. Omitted fields = everything (login included when
+// login identifiers are configured).
+func (s *PersonalInfoService) revealFields(req RevealRequest) ([]pii.Field, bool, error) {
+	if req.Fields == nil {
+		fields, err := validateReveal(req)
+		return fields, err == nil && s.Logins != nil, err
+	}
+	rest := make([]string, 0, len(req.Fields))
+	withLogin := false
+	for _, f := range req.Fields {
+		if f != RevealFieldLogin {
+			rest = append(rest, f)
+			continue
+		}
+		if withLogin || s.Logins == nil {
+			return nil, false, NewValidationError("fields", pii.CodeInvalidFormat)
+		}
+		withLogin = true
+	}
+	if withLogin && len(rest) == 0 {
+		req.Fields = nil
+		if _, err := validateReveal(req); err != nil {
+			return nil, false, err
+		}
+		return nil, true, nil
+	}
+	req.Fields = rest
+	fields, err := validateReveal(req)
+	return fields, withLogin, err
 }
 
 // LookupByPhone finds customers by phone number through the blind index
@@ -407,6 +469,46 @@ func (s *PersonalInfoService) LookupByPhone(ctx context.Context, a Actor, phone 
 	}
 	details := map[string]any{"bidx": hex.EncodeToString(bidx.Sum), "matched_ids": ids, "matches": len(ids), "truncated": res.Truncated}
 	if err := s.appendAudit(ctx, s.event(a, audit.ActionCustomerPIILookup, uuid.Nil, details)); err != nil {
+		return LookupResult{}, fmt.Errorf("audit lookup: %w", err)
+	}
+	return res, nil
+}
+
+// LookupByLogin finds customers by login identifier (PLI-FR-11): exact
+// pseudonym match in Kratos (plus the legacy email during the migration).
+// Permission: view_customers; charged one unit on the lookup quota.
+// Audited as customer.login.lookup with the kind and matched ids only.
+func (s *PersonalInfoService) LookupByLogin(ctx context.Context, a Actor, kind, value string) (LookupResult, error) {
+	if err := require(ctx, s.Authz, a, identity.PermViewCustomers); err != nil {
+		return LookupResult{}, err
+	}
+	if s.Logins == nil {
+		return LookupResult{}, NewValidationError("login", "unsupported")
+	}
+	if !s.LookupLimiter.Allow(a.Principal.IdentityID) {
+		return LookupResult{}, ErrRateLimited
+	}
+	its, err := s.Logins.FindCustomers(ctx, kind, value)
+	if err != nil {
+		return LookupResult{}, err
+	}
+	masked, _ := s.Logins.MaskMany(ctx, its)
+	res := LookupResult{Matches: []LookupMatch{}}
+	ids := []string{}
+	for _, it := range its {
+		v, err := s.read(ctx, it.ID)
+		if err != nil {
+			return LookupResult{}, err
+		}
+		m := LookupMatch{IdentityID: it.ID, State: it.State, Masked: v.Info.Mask(), UpdatedAt: v.UpdatedAt}
+		if ml, ok := masked[it.ID]; ok {
+			m.Login = &ml
+		}
+		res.Matches = append(res.Matches, m)
+		ids = append(ids, it.ID.String())
+	}
+	details := map[string]any{"kind": kind, "matched_ids": ids, "matches": len(ids)}
+	if err := s.appendAudit(ctx, s.event(a, audit.ActionCustomerLoginLookup, uuid.Nil, details)); err != nil {
 		return LookupResult{}, fmt.Errorf("audit lookup: %w", err)
 	}
 	return res, nil

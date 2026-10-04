@@ -219,6 +219,10 @@ func (g *Guard) Middleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		if plane == PlanePublic {
+			g.servePublic(w, r, next)
+			return
+		}
 		if plane == PlaneMachine {
 			if g.Machine == nil {
 				writeProblem(w, r, CodeDependencyUnavailable, "", nil)
@@ -287,6 +291,26 @@ func (g *Guard) Middleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// servePublic runs a public route: it must match a route whose policy is
+// PlanePublic (fail closed), and gets the client IP from the trusted hop.
+func (g *Guard) servePublic(w http.ResponseWriter, r *http.Request, next http.Handler) {
+	rctx := chi.NewRouteContext()
+	if !g.Router.Match(rctx, r.Method, routingPath(r)) {
+		writeProblem(w, r, CodeNotFound, "", nil)
+		return
+	}
+	if pol, ok := g.Policies[routeKey(r.Method, rctx.RoutePattern())]; !ok || pol.Plane != PlanePublic {
+		writeProblem(w, r, CodeInternal, "", nil)
+		return
+	}
+	ip := clientIP(r, g.TrustedHops)
+	if ip == nil {
+		writeProblem(w, r, CodeInvalidRequest, "", nil)
+		return
+	}
+	next.ServeHTTP(w, r.WithContext(withPublicClientIP(r.Context(), *ip)))
 }
 
 func isMutation(m string) bool {
