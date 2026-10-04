@@ -7,7 +7,10 @@ import {
   PII_FIELDS,
   type PersonalInfo,
   type PiiField,
+  REVEAL_FIELDS,
+  type RevealField,
   type RevealRequest,
+  type RevealedPersonalInfo,
 } from "../../api/client";
 import { useCan } from "../../auth/me";
 import { useAuthRedirect } from "../../auth/useAuthRedirect";
@@ -17,6 +20,7 @@ import { Button } from "../../shared/ui/Button";
 import { Card } from "../../shared/ui/Card";
 import { Spinner } from "../../shared/ui/Spinner";
 import { auditKeys } from "../audit/queries";
+import { LoginTypeLabel } from "./LoginValue";
 import { piiErrorMessage } from "./piiErrors";
 import { maskedPersonalInfoQuery, revealPersonalInfo } from "./queries";
 import { RevealDialog } from "./RevealDialog";
@@ -33,8 +37,8 @@ const HAS: Record<PiiField, keyof MaskedPersonalInfo> = {
 };
 
 interface Revealed {
-  info: PersonalInfo;
-  fields: readonly PiiField[];
+  info: RevealedPersonalInfo;
+  fields: readonly RevealField[];
 }
 
 function join(parts: readonly (string | null | undefined)[]): string {
@@ -87,12 +91,21 @@ function revealedValue(p: PersonalInfo, f: PiiField, { idType, lng }: Fmt) {
 /**
  * Customer personal information on the detail page. Shows the masked view
  * (cached like any other query) and, for admins with `reveal_customer_pii`,
- * a Reveal action. Revealed plaintext lives ONLY in this component's state:
+ * a Reveal action that can also reveal the login identifier (`login`,
+ * PLI-FR-12; its masked form is on the account card). Revealed plaintext
+ * lives ONLY in this component's state:
  * it is never written to the TanStack caches, URL, router state, web storage
  * or logs, is hidden after REVEAL_TTL_MS and is dropped on unmount.
  * Render with `key={customerId}` so switching customers starts clean.
  */
-export function PersonalInfoCard({ customerId }: { customerId: string }) {
+export function PersonalInfoCard({
+  customerId,
+  hasLogin = false,
+}: {
+  customerId: string;
+  /** The customer has a readable login identifier that can be revealed. */
+  hasLogin?: boolean;
+}) {
   const { t, i18n } = useTranslation();
   const qc = useQueryClient();
   const canReveal = useCan("reveal_customer_pii");
@@ -131,7 +144,7 @@ export function PersonalInfoCard({ customerId }: { customerId: string }) {
     try {
       const info = await revealPersonalInfo(customerId, body);
       if (!mounted.current) return;
-      setRevealed({ info, fields: body.fields ?? PII_FIELDS });
+      setRevealed({ info, fields: body.fields ?? REVEAL_FIELDS });
       setDialogOpen(false);
       // The reveal wrote an audit event (no PII is cached by this).
       void qc.invalidateQueries({ queryKey: auditKeys.all });
@@ -150,10 +163,35 @@ export function PersonalInfoCard({ customerId }: { customerId: string }) {
     body = <Alert kind="error">{piiErrorMessage(t, query.error, "masked")}</Alert>;
   } else {
     const m = query.data;
-    const available = PII_FIELDS.filter((f) => m[HAS[f]] === true);
+    const available: RevealField[] = [
+      ...(hasLogin ? (["login"] as const) : []),
+      ...PII_FIELDS.filter((f) => m[HAS[f]] === true),
+    ];
+    // `undefined` = not revealed (masked form is on the account card); `null` = revealed but absent.
+    const revealedLogin =
+      hasLogin && revealed?.fields.includes("login") ? (revealed.info.login ?? null) : undefined;
     body = (
       <>
         <dl className="grid gap-4 sm:grid-cols-2">
+          {revealedLogin !== undefined ? (
+            <div>
+              <dt className="text-xs font-medium tracking-wide text-slate-500 uppercase">
+                {t("pii.fields.login")}
+              </dt>
+              <dd className="mt-1 text-sm text-slate-900">
+                {revealedLogin ? (
+                  <span className="inline-flex items-center">
+                    <LoginTypeLabel type={revealedLogin.type} />
+                    <span className="font-mono" data-testid="pii-revealed-login">
+                      {revealedLogin.value}
+                    </span>
+                  </span>
+                ) : (
+                  <span data-testid="pii-revealed-login">—</span>
+                )}
+              </dd>
+            </div>
+          ) : null}
           {PII_FIELDS.map((f) => {
             let value: ReactNode;
             if (m[HAS[f]] !== true) {
@@ -206,7 +244,9 @@ export function PersonalInfoCard({ customerId }: { customerId: string }) {
     );
   }
 
-  const hasAny = query.data ? PII_FIELDS.some((f) => query.data[HAS[f]] === true) : false;
+  const hasAny = query.data
+    ? hasLogin || PII_FIELDS.some((f) => query.data[HAS[f]] === true)
+    : false;
 
   return (
     <Card>

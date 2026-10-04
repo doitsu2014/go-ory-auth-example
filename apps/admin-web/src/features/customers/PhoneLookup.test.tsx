@@ -8,6 +8,7 @@ import {
   adminMe,
   customer,
   loginFlow,
+  MASKED_LOGIN,
   maskedPersonalInfo,
   passwordLoginNodes,
   problem,
@@ -55,7 +56,7 @@ describe("PhoneLookup", () => {
     const { lookups } = setup();
     const user = userEvent.setup();
     const { router, queryClient } = renderApp("/customers");
-    await screen.findByText("customer1@example.com");
+    await screen.findByText("Customer 1");
 
     const { form, input } = phoneField();
     await user.type(input, "+84 901-234.567");
@@ -87,7 +88,7 @@ describe("PhoneLookup", () => {
     expect(dump).not.toContain("901234567");
 
     await user.click(within(results).getByRole("link", { name: `View ${C.id}` }));
-    expect(await screen.findByRole("heading", { name: C.email })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: MASKED_LOGIN })).toBeInTheDocument();
     expect(router.state.location.pathname).toBe(`/customers/${C.id}`);
     expect(router.state.location.state).toBeNull();
   });
@@ -98,7 +99,7 @@ describe("PhoneLookup", () => {
       const { lookups } = setup();
       const user = userEvent.setup();
       renderApp("/customers");
-      await screen.findByText("customer1@example.com");
+      await screen.findByText("Customer 1");
       const { form, input } = phoneField();
       await user.type(input, phone);
       await user.click(within(form).getByRole("button", { name: "Search" }));
@@ -115,7 +116,7 @@ describe("PhoneLookup", () => {
     const { lookups } = setup();
     const user = userEvent.setup();
     renderApp("/customers");
-    await screen.findByText("customer1@example.com");
+    await screen.findByText("Customer 1");
     const { form, input } = phoneField();
     await user.type(input, PHONE);
     await user.click(within(form).getByRole("button", { name: "Search" }));
@@ -136,7 +137,7 @@ describe("PhoneLookup", () => {
     setup(() => HttpResponse.json(lookupResult(true)));
     const user = userEvent.setup();
     renderApp("/customers");
-    await screen.findByText("customer1@example.com");
+    await screen.findByText("Customer 1");
     expect(screen.getByText(/Phone numbers are self-declared by customers/)).toBeInTheDocument();
     const { form, input } = phoneField();
     await user.type(input, PHONE);
@@ -149,7 +150,7 @@ describe("PhoneLookup", () => {
     setup();
     const user = userEvent.setup();
     renderApp("/customers");
-    await screen.findByText("customer1@example.com");
+    await screen.findByText("Customer 1");
     const { form, input } = phoneField();
     await user.type(input, PHONE);
     await user.click(within(form).getByRole("button", { name: "Search" }));
@@ -161,7 +162,7 @@ describe("PhoneLookup", () => {
     setup(() => HttpResponse.json(lookupResult(true)));
     const user = userEvent.setup();
     renderApp("/customers");
-    await screen.findByText("customer1@example.com");
+    await screen.findByText("Customer 1");
     const { default: i18n } = await import("../../i18n");
     await act(() => i18n.changeLanguage("vi"));
     const form = screen.getByRole("form", { name: "Tìm theo số điện thoại" });
@@ -178,7 +179,7 @@ describe("PhoneLookup", () => {
     setup(() => HttpResponse.json({ items: [], truncated: false }));
     const user = userEvent.setup();
     renderApp("/customers");
-    await screen.findByText("customer1@example.com");
+    await screen.findByText("Customer 1");
     const { form, input } = phoneField();
     await user.type(input, PHONE);
     await user.click(within(form).getByRole("button", { name: "Search" }));
@@ -201,7 +202,7 @@ describe("PhoneLookup", () => {
     setup(() => HttpResponse.json(problem(status, code), { status }));
     const user = userEvent.setup();
     renderApp("/customers");
-    await screen.findByText("customer1@example.com");
+    await screen.findByText("Customer 1");
     const { form, input } = phoneField();
     await user.type(input, PHONE);
     await user.click(within(form).getByRole("button", { name: "Search" }));
@@ -218,7 +219,7 @@ describe("PhoneLookup", () => {
     );
     const user = userEvent.setup();
     const { router } = renderApp("/customers");
-    await screen.findByText("customer1@example.com");
+    await screen.findByText("Customer 1");
     const { form, input } = phoneField();
     await user.type(input, PHONE);
     await user.click(within(form).getByRole("button", { name: "Search" }));

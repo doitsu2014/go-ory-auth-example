@@ -1,8 +1,17 @@
 import type { UiNode, UiText } from "@ory/client-fetch";
 
-import type { AdminMe, Customer, MaskedPersonalInfo, PersonalInfo } from "../api/client";
+import type {
+  AdminMe,
+  Customer,
+  MaskedPersonalInfo,
+  PersonalInfo,
+  RevealedPersonalInfo,
+} from "../api/client";
 
 export const CSRF = "csrf-token-value";
+
+/** Masked login every `customer()` fixture carries (PLI-FR-10 shape). */
+export const MASKED_LOGIN = "c***@e***.com";
 
 export function text(
   id: number,
@@ -100,7 +109,8 @@ export function adminMe(overrides: Partial<AdminMe> = {}): AdminMe {
 export function customer(i: number, overrides: Partial<Customer> = {}): Customer {
   return {
     id: `5d9c0000-0000-4000-8000-${String(i).padStart(12, "0")}`,
-    email: `customer${String(i)}@example.com`,
+    login: { type: "email", masked: MASKED_LOGIN },
+    login_unavailable: false,
     email_verified: true,
     state: "active",
     display_name: `Customer ${String(i)}`,
@@ -145,5 +155,16 @@ export function problem(status: number, code: string) {
     title: code,
     status,
     code,
+  };
+}
+
+/** Reveal response: personal info plus the full login identifier. */
+export function revealedPersonalInfo(
+  overrides: Partial<RevealedPersonalInfo> = {},
+): RevealedPersonalInfo {
+  return {
+    ...personalInfo(),
+    login: { type: "email", value: "customer@example.com" },
+    ...overrides,
   };
 }

@@ -5,9 +5,9 @@ import { useTranslation } from "react-i18next";
 import { z } from "zod";
 
 import {
-  PII_FIELDS,
-  type PiiField,
+  REVEAL_FIELDS,
   REVEAL_REASON_CODES,
+  type RevealField,
   type RevealReasonCode,
   type RevealRequest,
 } from "../../api/client";
@@ -36,8 +36,8 @@ const DEFAULTS: FormValues = { reasonCode: "", ticketRef: "", fields: [] };
 
 export interface RevealDialogProps {
   open: boolean;
-  /** Fields the customer has provided (only these can be selected). */
-  available: readonly PiiField[];
+  /** Fields the customer has provided, incl. `login` (only these can be selected). */
+  available: readonly RevealField[];
   busy?: boolean;
   /** Localised error from the last attempt, shown inside the dialog. */
   error?: string;
@@ -80,7 +80,7 @@ export function RevealDialog(props: RevealDialogProps) {
           const body: RevealRequest = { reason_code: v.reasonCode };
           const ticket = v.ticketRef.trim();
           if (ticket) body.ticket_ref = ticket;
-          const fields = PII_FIELDS.filter((f) => v.fields.includes(f));
+          const fields = REVEAL_FIELDS.filter((f) => v.fields.includes(f));
           if (fields.length > 0) body.fields = fields;
           props.onConfirm(body);
         })()

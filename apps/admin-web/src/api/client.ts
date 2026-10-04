@@ -18,9 +18,17 @@ export type IdentityState = Schemas["IdentityState"];
 export type InviteAdminRequest = Schemas["InviteAdminRequest"];
 export type PersonalInfo = Schemas["PersonalInfo"];
 export type MaskedPersonalInfo = Schemas["MaskedPersonalInfo"];
+export type RevealedPersonalInfo = Schemas["RevealedPersonalInfo"];
 export type RevealRequest = Schemas["RevealRequest"];
 export type RevealReasonCode = RevealRequest["reason_code"];
-export type PiiField = NonNullable<RevealRequest["fields"]>[number];
+/** Every field the reveal endpoint accepts: personal info plus the login identifier. */
+export type RevealField = NonNullable<RevealRequest["fields"]>[number];
+/** Personal-info fields (have a masked counterpart in MaskedPersonalInfo). */
+export type PiiField = Exclude<RevealField, "login">;
+export type LoginType = Schemas["LoginType"];
+export type LoginIdentifier = Schemas["LoginIdentifier"];
+export type MaskedLogin = Schemas["MaskedLogin"];
+export type CustomerLookupRequest = Schemas["CustomerLookupRequest"];
 export type CustomerLookupResult = Schemas["CustomerLookupResult"];
 export type CustomerLookupItem = CustomerLookupResult["items"][number];
 export type MachineScope = Schemas["MachineScope"];
@@ -45,6 +53,9 @@ export const PII_FIELDS: readonly PiiField[] = [
   "address",
   "national_id",
 ];
+
+/** Reveal-dialog order: the login identifier first, then personal info. */
+export const REVEAL_FIELDS: readonly RevealField[] = ["login", ...PII_FIELDS];
 
 export const MACHINE_SCOPES: readonly MachineScope[] = ["customers:read", "audit:read"];
 
