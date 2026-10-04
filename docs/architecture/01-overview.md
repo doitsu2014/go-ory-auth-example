@@ -11,8 +11,11 @@
 | Easy to run and reason about | `docker compose up` brings the full stack up in < 2 min |
 | Evolvable | OAuth2 (Hydra), social login, passkeys, more services can be added without client rewrites |
 
-Non-goals (v1): third-party OAuth2 clients, multi-tenancy, billing, SMS/phone
-login, production cloud provisioning.
+Non-goals (v1): third-party OAuth2 clients, multi-tenancy, billing,
+passwordless (code-only) login, production cloud provisioning. Customers can
+sign in with an email **or a phone number**. Kratos only ever stores a
+pseudonym of it ([ADR-0013](../adr/0013-pseudonymous-customer-login-identifiers.md)).
+SMS goes through a provider port (a Mailpit sink locally).
 
 ## 1.2 System context (C4 level 1)
 
@@ -28,13 +31,13 @@ flowchart TB
     core[Identity core<br/>Kratos · Keto · identity-service · PostgreSQL]
   end
 
-  smtp[(SMTP provider<br/>Mailpit locally)]
+  smtp[(SMTP / SMS provider<br/>Mailpit locally)]
 
   admin --> web
   customer --> app
   web --> core
   app --> core
-  core -- verification / recovery / invite emails --> smtp
+  core -- verification / recovery codes, invite emails, SMS --> smtp
   dev -. runs locally .-> platform
 ```
 
@@ -75,7 +78,8 @@ flowchart LR
   ketor --> pg
   ketow --> pg
   svc --> pg
-  kpub --> mail
+  kpub -. courier http (pseudonym, code) .-> svc
+  svc --> mail
 ```
 
 Only **Kratos public** and **identity-service** are reachable from the
@@ -96,6 +100,9 @@ private network (see [05-deployment](05-deployment.md)).
 | [0008](../adr/0008-profile-provisioning.md) | Profile provisioning via webhook + idempotent lazy upsert |
 | [0009](../adr/0009-go-service-architecture.md) | Hexagonal Go service: chi, pgx + sqlc, goose, oapi-codegen |
 | [0010](../adr/0010-contract-first-api.md) | Contract-first OpenAPI 3.0.3, RFC 9457 errors |
+| [0011](../adr/0011-envelope-encryption-for-pii.md) | Envelope encryption with OpenBao Transit for customer PII |
+| [0012](../adr/0012-hydra-for-machine-to-machine.md) | Ory Hydra for machine-to-machine access |
+| [0013](../adr/0013-pseudonymous-customer-login-identifiers.md) | Kratos stores only pseudonyms of customer emails/phones; identity-service resolves and delivers |
 
 ## 1.5 Options considered for the overall shape
 

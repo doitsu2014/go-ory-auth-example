@@ -14,9 +14,10 @@ PostgreSQL. Decision record: [ADR-0011](../adr/0011-envelope-encryption-for-pii.
 | `address` | confidential | AES-256-GCM (JSON) | — |
 | `national_id` {type, number} | restricted | AES-256-GCM (JSON) | — |
 | `display_name`, `avatar_url`, `locale` | internal | plaintext — `display_name` is an optional nickname, never the real name | — |
-| Kratos trait `email` | confidential | Kratos DB, plaintext: Kratos needs it for login lookup and to send verification/recovery mail. Controls in §8.10 | Kratos |
+| Login identifier (email or phone the customer signs in with) | confidential | `login_identifier.value_ct`: Transit AEAD (`identity-login-kek`), AAD = kind + pseudonym (§8.12) | HMAC pseudonym (Transit `identity-login-pseudonym`), which is also the Kratos `login_id` |
 
-The Kratos `customer` schema holds **only** `email`. The customer's name is not
+The Kratos `customer` schema holds **only** `login_id`, a pseudonym of the
+login identifier ([ADR-0013](../adr/0013-pseudonymous-customer-login-identifiers.md)). The customer's name is not
 a Kratos trait (registration with `traits.name` is rejected); it is written
 through `PUT /v1/me/personal-info` after email verification. Admin names stay
 in the `admin` schema (employee data).
@@ -165,19 +166,26 @@ overlay on iOS when the app is inactive, so OS snapshots don't capture PII.
 | Memory hygiene (best effort) | Art. 32 | — | V8.3.6 | — |
 | Crypto-shredding erasure | Art. 17 | Decree 13 Art. 16 | V8.3.2 | SP 800-88 (cryptographic erase) |
 | Breach readiness, DPIA | Art. 33, 35 | Decree 13 Art. 23 (72 h), 24 | — | — |
+| Pseudonymous login identifiers, no contact data in the IdP store | Art. 4(5), 25, 32(1)(a) | PDPL 91/2025/QH15; Decree 13 Art. 26 | V6.2.x, V8.3.4 | SP 800-188 (pseudonymisation) |
 
 Phone number, date of birth, address and ID number are *basic* personal data
 under Decree 13 Art. 2. Vietnam's Personal Data Protection Law No.
 91/2025/QH15 (effective 2026-01-01) supersedes much of Decree 13. Confirm the
 current article numbers with counsel before relying on this table.
 
-## 8.10 Plaintext that remains outside `customer_pii`
+## 8.10 What remains in the Kratos database
 
 | Where | What | Controls |
 | --- | --- | --- |
-| Kratos DB: `identities.traits`, `identity_credential_identifiers`, `identity_verifiable_addresses`, `identity_recovery_addresses` | customer email | Own database and role per component (no other service reads Kratos tables); KMS-encrypted volumes and backups in production; least-privilege DB access; admin API on a private network only |
-| Kratos DB: courier messages | email bodies (codes, links) | `kratos cleanup sql` scheduled to prune old flows and messages; same volume/backup encryption |
-| Kratos DB: sessions | IP address, user agent | Same as above; session lifespan limits retention |
+| `identities.traits`, `identity_credential_identifiers`, `identity_verifiable_addresses`, `identity_recovery_addresses` | customers: the pseudonym `<base32>@login.invalid` only. Admins: their work email (employee data) | Own database and role; KMS-encrypted volumes and backups in production; admin API on a private network only |
+| `courier_messages` | recipient (pseudonym or admin email), Kratos-rendered body with the one-time code | Never delivered by Kratos. Retention via `make kratos-scrub` (7 days; `kratos cleanup` does not delete courier messages) |
+| `selfservice_*_flows` | the identifier typed into a flow: a pseudonym. Only an outdated app could send a plaintext address, which the schema then rejects | `kratos cleanup sql --keep-last 24h`, scheduled |
+| `sessions` | IP address, user agent | Session lifespan limits retention (accepted risk, 06-security §6.7) |
+
+Before the login migration (§8.12) the same tables hold legacy customers'
+plaintext emails. `pii migrate-kratos-logins` rewrites them (Kratos deletes
+the old address rows), and `make kratos-scrub PHASE=complete` deletes the
+legacy courier messages.
 
 Accepted risk with owner: [06-security §6.7](06-security.md#67-accepted-risks-v1).
 
@@ -226,4 +234,85 @@ identity: to block such an account urgently, run the CLI first (with
 does not know the `name` field clears a migrated name when it saves. Ship the
 clients that send `name` (and enforce a minimum app version) **before** running
 the CLI in production.
+
+## 8.12 Login identifiers (ADR-0013)
+
+| Item | Value |
+| --- | --- |
+| Pseudonym | `base32_lower(HMAC-SHA256(identity-login-pseudonym v1, "login-id/v1" ‖ 0 ‖ kind ‖ 0 ‖ value)) + "@login.invalid"` |
+| Normalisation | email: trimmed, lower-cased, strict `net/mail`, no control/format characters, ≤ 254, not `@login.invalid`/`@sms.local`. Phone: separators stripped, `00`→`+`, a leading `0` takes the default country (`84`), E.164, the country must be in `LOGIN_PHONE_ALLOWED_COUNTRIES` |
+| Vault row | `login_identifier(pseudonym bytea PK, kind, value_ct "vault:vN:…", kek_version, identity_id UNIQUE NULL, bound_at, legacy_verified, created_at, last_validated_at)` |
+| AAD | `"identity-service/login/v1" ‖ 0 ‖ kind ‖ 0 ‖ hex(pseudonym)` |
+| Written | only by `POST /v1/auth/identifiers {purpose: registration}` (insert if absent; it always seals, so timing does not show existence) and by the migration CLI |
+| Bound | by the after-registration webhook, or lazily on `GET /v1/me` / courier delivery, after checking the identity's `login_id` in Kratos. A row bound to a deleted identity can be re-bound |
+| Purged | `pii purge-unbound-logins` (daily): unbound rows not validated for 24 h whose pseudonym has no Kratos identity, and rows bound to deleted identities (audited `customer.login.erased`; `pii reapply-erasures` re-applies them after a restore) |
+| Admin access | masked in lists and detail (one batch decrypt per page); lookup by body `{login:{type,value}}` (audited `customer.login.lookup`); reveal field `login` (audited `customer.pii.revealed`) |
+| Keys | the HMAC key is never rotated in place (every `login_id` depends on it): back it up with OpenBao snapshots. `identity-login-kek` rotates like the PII KEK (`make kek-rotate`, `make keys-rewrap` re-wraps the vault too) |
+
+Migration (existing customers, `./dev migrate-logins` or
+`identity-service pii migrate-kratos-logins [--dry-run]`). For each legacy
+customer:
+
+1. Seal the email into a vault row bound to the identity, recording whether
+   it was verified.
+2. Commit audit `customer.login.migrated`.
+3. Replace `traits.email` with `traits.login_id` (read-compare-patch).
+4. If the email was verified, mark the new address verified (a second
+   patch: Kratos resets verification on a trait change).
+
+A crash between 3 and 4 is repaired by the next run (`reverified`).
+
+Rollout order (production):
+
+1. identity-service with migration `0006`.
+2. Kratos with the transition schema, the http courier and profile settings
+   disabled. Run `LOGIN_MIGRATION_PHASE=transition`.
+3. Ship the app that resolves first, and enforce the minimum version.
+4. Run `pii migrate-kratos-logins` until `failed=0`.
+5. Deploy the final `customer.v2.json` with `LOGIN_MIGRATION_PHASE=complete`.
+6. Run `make kratos-scrub PHASE=complete`.
+
+During the window the pre-registration webhook also refuses a pseudonym
+whose address a legacy customer still uses.
+
+### Re-key runbook (pseudonym HMAC key compromised or retired, A7)
+
+The pseudonym key is never rotated in place: each Kratos `login_id` is
+derived from it. To move to a new key:
+
+1. Create `identity-login-pseudonym-v2` in OpenBao (type `hmac`,
+   `exportable=false`, `deletion_allowed=false`). Grant the app policy
+   `transit/hmac/identity-login-pseudonym-v2/*`.
+2. Put the platform in maintenance for customer sign-up. Sign-in keeps
+   working on the old pseudonyms until step 4.
+3. For every vault row, decrypt the address, compute the v2 pseudonym, insert
+   the v2 row (bound to the same identity, `legacy_verified` = the Kratos
+   verification state), and run the Kratos two-patch rewrite
+   (`replace /traits/login_id`, then re-mark verified). The procedure is the
+   same as `pii migrate-kratos-logins`, with the old pseudonym in place of
+   the legacy email. Tooling: follow-up CLI `pii rekey-logins` (owner:
+   identity-service maintainers). Until it exists, this runbook is executed
+   with a reviewed one-off script.
+4. Switch `PII_OPENBAO_LOGIN_HMAC_KEY_NAME` to the v2 key and restart, then
+   delete the v1 rows (`pii purge-unbound-logins` removes orphans).
+5. Clients re-resolve automatically: a cached pseudonym is evicted when Kratos
+   rejects it.
+
+Back the key up with OpenBao storage snapshots and escrowed unseal/recovery
+keys, and rehearse a restore. Transit `backup` is not used: it would need
+`exportable` + `allow_plaintext_backup`.
+
+### Alerts
+
+`deploy/observability/login-alerts.yml` alerts on:
+
+- courier drops by reason, and courier errors;
+- SMS budget use;
+- unbound vault rows;
+- pre-registration failures.
+
+Quotas and SMS budgets are counted in `courier_dispatch`, so they survive
+restarts and are shared by every replica. The per-IP resolve limits are kept
+in memory per replica: the effective limit is the configured value times the
+number of replicas.
 

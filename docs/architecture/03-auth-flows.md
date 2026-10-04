@@ -18,6 +18,12 @@ bypassing browser/CSRF controls.
 All passwords go **directly from the client to Kratos public**. They never pass
 through identity-service.
 
+Customers never send their email or phone number to Kratos (ADR-0013).
+Before every flow that takes an identifier, the app resolves it through
+`POST /v1/auth/identifiers` and gives Kratos the returned pseudonym
+`<base32>@login.invalid`. Kratos sends codes through its `http` courier to
+identity-service, which delivers them to the real address (§3.11).
+
 ---
 
 ## 3.1 Customer registration (mobile) + email verification
@@ -34,20 +40,25 @@ sequenceDiagram
   U->>A: Tap "Sign up"
   A->>K: GET /self-service/registration/api
   K-->>A: 200 flow {id, ui.nodes}
-  U->>A: email, name, password
-  A->>K: POST /self-service/registration?flow={id}<br/>{method:"password", traits:{email,name}, password}
-  alt validation error (weak/leaked password, email taken)
+  U->>A: email or phone, password
+  A->>S: POST /v1/auth/identifiers {type, value, purpose:"registration"}
+  S-->>A: {identifier: "<b32>@login.invalid"} (address sealed in the login vault)
+  A->>K: POST /self-service/registration?flow={id}<br/>{method:"password", traits:{login_id}, password}
+  K->>S: pre-registration webhook (parse:true): vault entry exists?
+  alt validation error (weak/leaked password, identifier taken, not resolved)
     K-->>A: 400 flow with ui.messages → show errors, retry same flow
   else success
     K->>S: POST /internal/hooks/kratos/after-registration (async, ignored response)
-    S->>S: upsert profile(identity_id)
-    K->>M: verification code email
+    S->>S: upsert profile(identity_id), bind login vault entry
+    K->>S: courier http {recipient: pseudonym, code}
+    S->>M: verification code to the real email (or SMS)
     K-->>A: 200 {identity, session, session_token,<br/>continue_with:[set_ory_session_token]}
     A->>A: store session_token in secure storage
   end
   Note over A,K: Native registration does not return show_verification_ui<br/>(observed on Kratos v26.2.0) — the app starts its own flow
-  A->>K: GET /self-service/verification/api → POST {method:"code", email}
-  K->>M: fresh verification code
+  A->>K: GET /self-service/verification/api → POST {method:"code", email: login_id}
+  K->>S: courier http {recipient: pseudonym, code}
+  S->>M: fresh verification code (email or SMS)
   A->>U: "Enter the code we emailed you"
   U->>A: 6-digit code
   A->>K: POST /self-service/verification?flow={vid} {method:"code", code}
@@ -74,9 +85,11 @@ sequenceDiagram
   participant C as Session cache
   participant DB as PostgreSQL (identity)
 
+  A->>S: POST /v1/auth/identifiers {type, value, purpose:"sign_in"} (or cached pseudonym)
+  S-->>A: {identifier}
   A->>K: GET /self-service/login/api
   K-->>A: 200 flow
-  A->>K: POST /self-service/login?flow={id}<br/>{method:"password", identifier, password}
+  A->>K: POST /self-service/login?flow={id}<br/>{method:"password", identifier: pseudonym, password}
   K-->>A: 200 {session, session_token}
   A->>A: save token (Keychain / Keystore)
 
@@ -108,8 +121,9 @@ sequenceDiagram
   participant K as Kratos public
   participant M as SMTP
   A->>K: GET /self-service/recovery/api
-  A->>K: POST /self-service/recovery?flow={id} {method:"code", email}
-  K->>M: recovery code (sent only if account exists; response is identical either way)
+  A->>K: POST /self-service/recovery?flow={id} {method:"code", email: pseudonym}
+  Note over A,K: the pseudonym comes from POST /v1/auth/identifiers {purpose:"recovery"}
+  K->>M: recovery code via identity-service courier (sent only if the account exists; response is identical either way)
   A->>K: POST /self-service/recovery?flow={id} {method:"code", code}
   K-->>A: 200 continue_with [set_ory_session_token, show_settings_ui]<br/>(requires feature_flags.use_continue_with_transitions: true)
   A->>K: POST /self-service/settings?flow={sid} {method:"password", password}
@@ -275,3 +289,18 @@ Kratos as its login & consent provider. Existing clients keep using Kratos
 sessions; only new clients use OAuth2, and identity-service learns to accept
 Hydra JWT access tokens in addition to sessions
 ([ADR-0002](../adr/0002-kratos-sessions-over-oauth2.md)).
+
+## 3.11 Pseudonymous customer login identifiers (ADR-0013)
+
+| Step | Who | What |
+| --- | --- | --- |
+| Resolve | App → identity-service `POST /v1/auth/identifiers` | Normalise (email lower-cased, phone E.164 with the default country `84`), compute HMAC in OpenBao, return `<base32>@login.invalid`. Only `purpose: registration` stores the address (encrypted). Rate limited per IP (IPv6 per /64). |
+| Register | App → Kratos | `traits.login_id = pseudonym`. The pre-registration webhook (`response.parse: true`) rejects a pseudonym without a vault entry (4049002), a legacy `email` trait (4049001) and, during the migration window, an address that a legacy customer already uses (4000007). |
+| Bind | Kratos → after-registration webhook (or lazily on `GET /v1/me`) | The vault entry is bound to the identity id. The binding uses only the authoritative `login_id` from Kratos. |
+| Deliver | Kratos courier `http` → `POST /internal/hooks/kratos/courier` (courier key) | Checks that the payload's identity really has this recipient, decrypts the address, renders the vi/en message and sends email or SMS. Duplicates are dropped (keyed hash), as are messages over quota (5/h and 20/day per recipient, SMS budget). Permanent failures get 204, transient ones 503, which makes Kratos retry. |
+| Show | `GET /v1/me` / admin views | The owner sees `login {type, value}`. Admins see `login {type, masked}`. A reveal (`fields: ["login"]`) is audited. |
+
+The Kratos `profile` settings method is disabled, so a customer cannot repoint
+`login_id`. Admin identities keep their plaintext work email; their Kratos
+mail also goes through the courier webhook, which sends it only to the
+admin's own address.
