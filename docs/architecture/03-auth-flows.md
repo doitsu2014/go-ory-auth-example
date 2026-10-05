@@ -1,5 +1,7 @@
 # 3. Authentication & Authorization Flows
 
+> **Current diagrams:** some sequences on this page predate ADR-0014 and the AdminGate MFA rules. The per-feature pages, checked against the code, are authoritative: [F01](../features/F01-customer-registration.md) · [F02](../features/F02-customer-verification.md) · [F03](../features/F03-customer-login.md) · [F04](../features/F04-customer-recovery.md) · [F05](../features/F05-customer-settings-logout.md) · [F06](../features/F06-request-authentication.md) · [F09](../features/F09-admin-sign-in.md) · [F10](../features/F10-admin-management.md).
+
 Ground rule ([ADR-0003](../adr/0003-browser-flows-web-native-flows-mobile.md)):
 
 | Client | Kratos flow type | Credential carried to our API |
@@ -131,7 +133,7 @@ sequenceDiagram
   participant M as SMTP
   A->>S: POST /v1/auth/recovery {login:{type, value}}
   S->>K: GET /self-service/recovery/api → POST {method:"code", email: handle or decoy}
-  S-->>A: 200 {recovery_id} (flow id sealed with the login KEK; identical shape whether or not the account exists)
+  S-->>A: 200 {recovery_id} (flow id sealed with the login KEK, identical shape whether or not the account exists)
   K->>M: recovery code via identity-service courier (sent only if the account exists)
   A->>S: POST /v1/auth/recovery/code {recovery_id, code}
   S->>K: POST /self-service/recovery?flow={id} {method:"code", code}

@@ -1,5 +1,7 @@
 # 6. Security
 
+> **Current diagrams:** the trust-boundary diagram omits the webhook listener, Hydra and OpenBao. See [Feature diagrams](../features/README.md#system-context) and [F06](../features/F06-request-authentication.md).
+
 Target: **OWASP ASVS v4 Level 2** for authentication (V2), session management
 (V3) and access control (V4). Kratos covers most of V2/V3 by design; our job
 is to configure it correctly and not undo it.

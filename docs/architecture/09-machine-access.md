@@ -1,5 +1,7 @@
 # 9. Machine-to-machine access (Ory Hydra)
 
+> **Current diagrams:** [F14 service clients](../features/F14-service-clients.md) · [F15 M2M API](../features/F15-machine-to-machine-api.md).
+
 Back-office jobs and partner systems call identity-service with OAuth2
 **client_credentials** tokens issued by **Ory Hydra**. People keep using Kratos
 sessions (ADR-0002); Hydra is used only for machines. Decision record:

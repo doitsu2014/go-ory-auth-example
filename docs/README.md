@@ -38,6 +38,8 @@ flowchart LR
   svc --> pg
 ```
 
+> **Diagrams:** the context diagram above is the v0.1 design. For the current system (Hydra, OpenBao, login vault, webhooks), see [Feature diagrams](features/README.md).
+
 ## Reading order
 
 | # | Document | What it answers |
@@ -58,6 +60,7 @@ flowchart LR
 | 13 | [Mobile guidelines](principles/04-mobile-flutter.md) | Flutter structure and auth handling |
 | 14 | [API guidelines](principles/05-api-guidelines.md) | REST conventions, errors, versioning |
 | 15 | [identity-service API](api/identity-service-api.md) | Endpoint-level contract (v1) |
+| 16 | [Feature diagrams](features/README.md) | Functional + sequence diagrams for every feature (F01–F16), checked against the code |
 | 16 | [Repository structure](repository-structure.md) | Monorepo layout |
 | 17 | [ADRs](adr/README.md) | Every significant decision and why |
 | 18 | [Roadmap](roadmap.md) | Build order (walking skeleton → features) |

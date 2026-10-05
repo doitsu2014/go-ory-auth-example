@@ -1,5 +1,7 @@
 # 10. Pseudonymous customer login: the model end to end
 
+> **Current diagrams:** per-feature pages with every branch: [F01](../features/F01-customer-registration.md) · [F03](../features/F03-customer-login.md) · [F04](../features/F04-customer-recovery.md) · [F07](../features/F07-customer-profile.md) · [F11](../features/F11-customer-management.md) · [F12](../features/F12-admin-pii-access.md).
+
 This chapter shows, on one page, how a customer signs in, registers, loads
 their profile and recovers a password. **Ory Kratos never stores a
 customer's email address or phone number**, and **no unauthenticated
@@ -186,7 +188,7 @@ sequenceDiagram
   I->>K: GET /self-service/recovery/api, then POST {method:"code", email: handle}
   K-->>I: 200 {id: flow_id, state "sent_email"} (identical whether or not the account exists)
   I->>B: transit/encrypt/identity-login-kek {flow_id, associated_data "identity-service/recovery-flow/v1"}
-  I-->>C: 200 {recovery_id} (opaque; differs on every call)
+  I-->>C: 200 {recovery_id} (opaque, differs on every call)
   opt account exists
     K->>I: courier {recipient: handle, template_type:"recovery_code_valid", code}
     I->>V: SELECT value_ct WHERE pseudonym = ?

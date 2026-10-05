@@ -1,5 +1,7 @@
 # 1. Architecture Overview
 
+> **Current diagrams:** the context diagram below predates Hydra and OpenBao. See [Feature diagrams](../features/README.md#system-context) for the current context and per-feature flows.
+
 ## 1.1 Goals
 
 | Goal | Measured by |

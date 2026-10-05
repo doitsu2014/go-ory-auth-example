@@ -1,5 +1,7 @@
 # 8. Personal data (PII) protection
 
+> **Current diagrams:** [F08 customer PII](../features/F08-customer-personal-info.md) · [F11 lookup](../features/F11-customer-management.md) · [F12 masked view and reveal](../features/F12-admin-pii-access.md) · [F16 key rotation](../features/F16-background-jobs.md).
+
 Customer personal information (name, phone number, date of birth, postal
 address, national ID) is encrypted at the application layer before it reaches
 PostgreSQL. Decision record: [ADR-0011](../adr/0011-envelope-encryption-for-pii.md).
